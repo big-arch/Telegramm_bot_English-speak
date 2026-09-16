@@ -14,8 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# The SQLite file lives here; mount a volume so it survives a redeploy.
+# The SQLite file lives here; mount a volume so it survives a redeploy. On a
+# host with ephemeral disk, point DB_DSN at Postgres/Supabase instead.
 RUN mkdir -p /app/data && useradd -m -u 1000 bot && chown -R bot:bot /app
 USER bot
+
+# Only used in webhook mode. Hosts usually override this via the PORT env var.
+EXPOSE 8000
 
 CMD ["sh", "-c", "alembic upgrade head && python -m scripts.seed && python -m bot"]

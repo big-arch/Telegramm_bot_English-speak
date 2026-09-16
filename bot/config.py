@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # --- Optional infra ---
     redis_url: str | None = None
 
+    # --- Hosting ---
+    # Set WEBHOOK_BASE_URL to run in webhook mode (required on hosts that put
+    # the service to sleep when idle — Telegram's own POST is what wakes it).
+    # Leave empty to poll, which is right for a laptop or a always-on VM.
+    webhook_base_url: str | None = None
+    webhook_secret: SecretStr | None = None
+    port: int = 8000
+
     # --- Ops ---
     admin_ids: list[int] = Field(default_factory=list)
     log_level: str = "INFO"
@@ -69,6 +77,8 @@ class Settings(BaseSettings):
 
     @field_validator(
         "redis_url",
+        "webhook_base_url",
+        "webhook_secret",
         "elevenlabs_api_key",
         "openai_api_key",
         "anthropic_api_key",
@@ -84,6 +94,14 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.db_dsn.startswith("sqlite")
+
+    @property
+    def use_webhook(self) -> bool:
+        return bool(self.webhook_base_url)
+
+    @property
+    def webhook_path(self) -> str:
+        return "/tg/webhook"
 
     def missing_keys(self) -> list[str]:
         """Which keys the chosen providers need but do not have.

@@ -89,3 +89,19 @@ def test_a_real_looking_project_ref_is_not_flagged():
         "@aws-0-eu-west-1.pooler.supabase.com:5432/postgres"
     )
     assert problems(real) == []
+
+
+def test_tenant_not_found_is_a_host_problem(capsys):
+    """Supabase's pooler says "tenant not found" when the project reference is
+    looked up on a pooler that does not serve it. The reference and password
+    are usually fine; the host is not — and the host cannot be derived from a
+    region name, because the prefix is assigned per project."""
+    import scripts.doctor as doctor
+
+    doctor.explain_connection_error(
+        "InternalServerError: (ENOTFOUND) tenant/user postgres.abc123 not found"
+    )
+    out = capsys.readouterr().out
+    assert "HOST is wrong" in out
+    assert "Connect" in out
+    assert "password" not in out.split("HOST is wrong")[0]

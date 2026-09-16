@@ -148,8 +148,26 @@ def main() -> int:
 
     print()
     print(f"!! Could not connect to the database: {error}")
+    explain_connection_error(error)
+    return 1
+
+
+def explain_connection_error(error: str) -> None:
+    """Turn a driver error into the action that fixes it."""
     lowered = error.lower()
-    if "password authentication" in lowered:
+    if "tenant" in lowered and "not found" in lowered:
+        # Supabase's pooler answering this means the project reference is being
+        # looked up on a pooler that does not serve it: the ref is usually
+        # right and the HOST is wrong. Guessing the host from a region name
+        # does not work — the prefix (aws-0 / aws-1 / ...) is assigned per
+        # project and only the dashboard knows it.
+        print("   The pooler answered but does not serve this project, which means")
+        print("   the HOST is wrong — not the project reference and not the password.")
+        print("   Do not construct the host by hand. In Supabase press the green")
+        print("   'Connect' button at the top, choose 'Session pooler', and copy the")
+        print("   URI exactly as shown; then change only 'postgresql://' to")
+        print("   'postgresql+asyncpg://' and fill in the password.")
+    elif "password authentication" in lowered:
         print("   A Supabase host answered and refused these credentials. Either:")
         print("     - the password is wrong, or")
         print("     - the username/host belong to a DIFFERENT project than yours.")
@@ -157,10 +175,9 @@ def main() -> int:
         print("   reference and the host names your project's region, then compare")
         print("   against Project Settings -> Database -> Connection string.")
     elif "could not translate host name" in lowered or "nodename" in lowered:
-        print("   The hostname does not resolve — the string was truncated or mistyped.")
+        print("   The hostname does not resolve - the string was truncated or mistyped.")
     elif "timeout" in lowered or "timed out" in lowered:
         print("   The host did not answer. Check the Supabase project is not paused.")
-    return 1
 
 
 if __name__ == "__main__":

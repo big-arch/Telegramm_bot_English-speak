@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     tutor_model: str = "claude-opus-5"
     assessor_model: str = "claude-opus-5"
 
+    # --- Vision ---
+    # Looking at a photo the learner sends, so the conversation can be about
+    # their own life rather than a stock topic. "auto" prefers Gemini when a key
+    # is present — its vision is reliable and free — and falls back to Groq.
+    vision_provider: str = "auto"  # auto | gemini | groq | off
+    groq_vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    max_photo_bytes: int = 4_000_000
+
     # --- Speech recognition ---
     stt_provider: str = "groq"  # groq (free) | openai
     groq_api_key: SecretStr | None = None
@@ -128,6 +136,17 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.db_dsn.startswith("sqlite")
+
+    @property
+    def resolved_vision_provider(self) -> str:
+        """Which backend should look at photos. 'off' when none can."""
+        if self.vision_provider != "auto":
+            return self.vision_provider
+        if self.gemini_api_key is not None:
+            return "gemini"
+        if self.groq_api_key is not None and self.groq_vision_model:
+            return "groq"
+        return "off"
 
     @property
     def public_base_url(self) -> str | None:

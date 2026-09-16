@@ -152,6 +152,8 @@ def check_groq_models() -> list[str]:
         from bot.services.stt import MODELS
 
         wanted[MODELS["groq"]] = "speech recognition"
+    if settings.resolved_vision_provider == "groq" and settings.groq_vision_model:
+        wanted[settings.groq_vision_model] = "GROQ_VISION_MODEL (photos)"
 
     if not wanted:
         return []

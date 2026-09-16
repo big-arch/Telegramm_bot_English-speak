@@ -146,9 +146,14 @@ class Turn(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
 
-    modality: Mapped[str] = mapped_column(String(8))  # voice | text
+    modality: Mapped[str] = mapped_column(String(8))  # voice | text | photo
     user_text: Mapped[str] = mapped_column(Text)
     assistant_text: Mapped[str] = mapped_column(Text)
+
+    # Telegram's id for a photo the learner sent. Kept so it can be shown back
+    # to them later — "remember this? tell me about it again" is a genuinely
+    # good revision prompt, and re-sending by file_id costs nothing.
+    image_file_id: Mapped[str | None] = mapped_column(String(160))
 
     # Fluency, measured from Whisper word timestamps. Nulls for text turns.
     audio_seconds: Mapped[float | None] = mapped_column(Float)

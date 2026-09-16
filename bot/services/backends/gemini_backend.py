@@ -74,6 +74,28 @@ class GeminiBackend:
         )
         return (response.text or "").strip(), _usage(response)
 
+    async def describe_image(
+        self, *, image: bytes, mime: str, prompt: str, max_tokens: int
+    ) -> tuple[str, Usage]:
+        response = await self.client.aio.models.generate_content(
+            model=settings.gemini_chat_model,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_bytes(data=image, mime_type=mime),
+                        types.Part(text=prompt),
+                    ],
+                )
+            ],
+            config=types.GenerateContentConfig(
+                max_output_tokens=max_tokens,
+                temperature=0.4,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            ),
+        )
+        return (response.text or "").strip(), _usage(response)
+
     async def complete_json(
         self, *, system: str, prompt: str, schema: type[BaseModel], max_tokens: int
     ) -> tuple[BaseModel | None, Usage]:

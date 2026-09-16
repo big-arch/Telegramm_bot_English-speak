@@ -35,3 +35,19 @@ class LLMBackend(Protocol):
         """Schema-validated JSON. Returns None rather than raising — feedback is a
         nicety, and a failed assessment must never cost the learner their reply."""
         ...
+
+    async def describe_image(
+        self, *, image: bytes, mime: str, prompt: str, max_tokens: int
+    ) -> tuple[str, Usage]:
+        """Look at an image and answer `prompt` about it.
+
+        Raises VisionUnsupported when the backend or its configured model
+        cannot see. Callers degrade gracefully rather than failing: a tutor who
+        cannot see a photo can still ask the learner to describe it, which is
+        the better language exercise anyway.
+        """
+        ...
+
+
+class VisionUnsupported(RuntimeError):
+    """The selected provider cannot look at images."""

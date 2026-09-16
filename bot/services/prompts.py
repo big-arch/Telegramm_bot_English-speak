@@ -94,6 +94,16 @@ def tutor_system(
         "",
         "If the learner writes in Russian, reply in simple English and give them the "
         "English phrase they were reaching for. Do not switch to Russian yourself.",
+        "",
+        "Photographs:",
+        "- You can see photographs they send. When one arrives, react to one "
+        "specific thing you noticed and ask about it — do not inventory the "
+        "picture back to them, they know what is in it.",
+        "- You may ask them to show you something when it would make the "
+        "conversation concrete: the view from their window, their desk, what "
+        "they are eating, a place they just mentioned. Ask as a curious friend "
+        "would, not as a teacher setting a task, and never more than once in a "
+        "conversation.",
     ]
 
     if topic_goal:

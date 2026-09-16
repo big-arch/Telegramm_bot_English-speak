@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from bot import personas as personas_mod
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import CardRepo, ErrorRepo, SessionRepo, TurnRepo, UsageRepo
-from bot.services import llm
+from bot.services import llm, vision
+from bot.services.backends import Usage
 from bot.services.fluency import FluencyMetrics
 
 logger = logging.getLogger(__name__)
@@ -60,14 +61,25 @@ async def process_turn(
     text: str,
     modality: str,
     metrics: FluencyMetrics | None = None,
+    photo_description: str | None = None,
+    image_file_id: str | None = None,
 ) -> TurnResult:
+    """One exchange.
+
+    `photo_description` marks the turn as the learner showing a picture rather
+    than saying something. The description goes into the history as context,
+    and the assessor is skipped — grading the model's own description as if the
+    learner had produced it would invent errors they never made.
+    """
     persona = personas_mod.get(convo.persona_key)
+    is_photo = photo_description is not None
 
     session_repo = SessionRepo(db)
     error_repo = ErrorRepo(db)
 
     past = await session_repo.history(convo.id, limit=HISTORY_TURNS)
-    history = _build_history(convo, past, text)
+    current = vision.as_history_note(photo_description) if is_photo else text
+    history = _build_history(convo, past, current)
 
     recent = await error_repo.recent_categories(user.id)
     weak = [category for category, _ in recent.most_common(3)]
@@ -82,22 +94,29 @@ async def process_turn(
         weak_categories=weak,
         topic_goal=topic.goal_prompt if topic else None,
     )
-    assess_task = llm.assess(
-        utterance=text,
-        level=user.productive_level,
-        modality=modality,
-        recent_categories=weak,
-    )
-
-    (reply, reply_usage), (assessment, assess_usage) = await asyncio.gather(
-        reply_task, assess_task
-    )
+    if is_photo:
+        # Nothing the learner said, so nothing to assess. Running the assessor
+        # on the model's own description would manufacture errors they never
+        # made and put them in their history.
+        reply, reply_usage = await reply_task
+        assessment, assess_usage = None, Usage()
+    else:
+        assess_task = llm.assess(
+            utterance=text,
+            level=user.productive_level,
+            modality=modality,
+            recent_categories=weak,
+        )
+        (reply, reply_usage), (assessment, assess_usage) = await asyncio.gather(
+            reply_task, assess_task
+        )
 
     turn = Turn(
         session_id=convo.id,
         user_id=user.id,
         modality=modality,
-        user_text=text,
+        image_file_id=image_file_id,
+        user_text=f"[photo] {photo_description}" if is_photo else text,
         assistant_text=reply,
         error_count=len(assessment.findings) if assessment else 0,
         estimated_level=assessment.estimated_level if assessment else None,

@@ -24,7 +24,7 @@ from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
 from bot.keyboards.common import topics_kb
 from bot.services import conversation as convo_service
-from bot.services import feedback, fluency, llm, stt
+from bot.services import feedback, fluency, llm, stt, vision
 from bot.services.speak import send_spoken
 from bot.texts import (
     CHOOSE_TOPIC,
@@ -32,7 +32,10 @@ from bot.texts import (
     DEBRIEF_HEADER,
     ERROR_GENERIC,
     LISTENING,
+    LOOKING,
     NO_ACTIVE_SESSION,
+    PHOTO_NOT_READABLE,
+    PHOTO_NOT_SUPPORTED,
     SEND_VOICE_NOT_FILE,
     SESSION_TOO_SHORT,
     THINKING,
@@ -214,6 +217,76 @@ async def on_voice(message: Message, session: DbSession, user: User, bot: Bot) -
         return
 
     await status.edit_text(f"🗣 <i>{transcript.text}</i>")
+    await _reply(bot, session, chat_id=message.chat.id, convo=convo, user=user, text=result.reply)
+
+
+# --------------------------------------------------------------------------- #
+# Photos — the learner shows you something
+# --------------------------------------------------------------------------- #
+
+
+@router.message(F.photo)
+async def on_photo(message: Message, session: DbSession, user: User, bot: Bot) -> None:
+    """Talk about a picture the learner sent.
+
+    Describing an image is a speaking skill in its own right, and doing it on
+    their own photo rather than a stock one is the difference between an
+    exercise and a conversation — they already know what is in it and want to
+    say something about it.
+    """
+    photo = message.photo[-1] if message.photo else None
+    if photo is None:
+        return
+
+    if not vision.available():
+        # A tutor who cannot see can still ask them to describe it, which is
+        # the better exercise anyway. Never a dead end.
+        await message.answer(PHOTO_NOT_SUPPORTED)
+        return
+
+    status = await message.answer(LOOKING)
+
+    try:
+        file = await bot.get_file(photo.file_id)
+        buffer = await bot.download_file(file.file_path)
+        image = buffer.read() if buffer is not None else b""
+    except Exception:
+        logger.exception("photo download failed for user %s", user.tg_id)
+        await status.edit_text(ERROR_GENERIC)
+        return
+
+    description, _usage = await vision.describe(image, mime="image/jpeg")
+    if not description:
+        await status.edit_text(PHOTO_NOT_READABLE)
+        return
+
+    # A caption is usually a fragment rather than a sentence, so it is shown to
+    # the tutor but not graded — marking "my dog :)" as an error would be both
+    # wrong and discouraging.
+    caption = (message.caption or "").strip()
+    if caption:
+        description = f"{description}\n\nThey wrote with it: \"{caption}\""
+
+    convo = await _ensure_session(session, user)
+    topic = await _topic_of(session, convo)
+
+    try:
+        result = await convo_service.process_turn(
+            session,
+            user=user,
+            convo=convo,
+            topic=topic,
+            text="",
+            modality="photo",
+            photo_description=description,
+            image_file_id=photo.file_id,
+        )
+    except Exception:
+        logger.exception("photo turn failed for user %s", user.tg_id)
+        await status.edit_text(ERROR_GENERIC)
+        return
+
+    await status.delete()
     await _reply(bot, session, chat_id=message.chat.id, convo=convo, user=user, text=result.reply)
 
 

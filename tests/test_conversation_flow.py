@@ -13,6 +13,7 @@ from sqlalchemy import func, select
 
 from bot.db.base import Base, engine, sessionmaker
 from bot.db.models import ErrorRecord, Session, Topic, Turn, UsageDay, User, UserCard
+from bot.db.repositories import SessionRepo
 from bot.services import conversation as convo_service
 from bot.services import llm
 from bot.services.backends import Usage
@@ -217,3 +218,91 @@ async def test_level_moves_slowly_not_in_one_jump(db, fixtures, monkeypatch):
     assert user.productive_level == "B1"
     # Receptive runs a band ahead of productive.
     assert user.receptive_level == "B2"
+
+
+class VisionStub(StubBackend):
+    """A backend that can also look at images."""
+
+    def __init__(self, description="A desk by a window with a laptop and a cup of tea."):
+        super().__init__()
+        self.description = description
+        self.image_calls = 0
+
+    async def describe_image(self, *, image, mime, prompt, max_tokens):
+        self.image_calls += 1
+        return self.description, Usage(50, 30)
+
+
+@pytest.mark.asyncio
+async def test_a_photo_turn_is_stored_but_never_assessed(db, fixtures, monkeypatch):
+    """The description is the model's words, not the learner's. Grading it
+    would invent errors they never made and file them in their history."""
+    user, topic, convo = fixtures
+    stub = VisionStub()
+    monkeypatch.setattr(llm, "get_backend", lambda: stub)
+
+    result = await convo_service.process_turn(
+        db,
+        user=user,
+        convo=convo,
+        topic=topic,
+        text="",
+        modality="photo",
+        photo_description=stub.description,
+        image_file_id="AgACAgIAAx0Cfake",
+    )
+
+    assert result.reply
+    assert stub.json_calls == 0, "the assessor must not run on a photo turn"
+    assert result.assessment is None
+
+    turn = await db.scalar(select(Turn).where(Turn.modality == "photo"))
+    assert turn is not None
+    assert turn.image_file_id == "AgACAgIAAx0Cfake"
+    assert stub.description in turn.user_text
+    assert turn.error_count == 0
+
+    errors = await db.scalar(
+        select(func.count()).select_from(ErrorRecord).where(ErrorRecord.user_id == user.id)
+    )
+    assert errors == 0
+
+
+@pytest.mark.asyncio
+async def test_the_photo_stays_in_context_for_later_turns(db, fixtures, monkeypatch):
+    """The point of the feature: the tutor can still refer to the picture
+    several turns later, the way a person would."""
+    user, topic, convo = fixtures
+    stub = VisionStub()
+    monkeypatch.setattr(llm, "get_backend", lambda: stub)
+
+    await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic, text="",
+        modality="photo", photo_description=stub.description,
+    )
+    await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic,
+        text="It is my favourite place", modality="text",
+    )
+
+    history = await SessionRepo(db).history(convo.id, limit=10)
+    combined = " ".join(t.user_text for t in history)
+    assert "laptop and a cup of tea" in combined
+
+
+@pytest.mark.asyncio
+async def test_a_photo_turn_does_not_count_as_a_voice_turn(db, fixtures, monkeypatch):
+    """Free-tier quotas are metered on speech; a picture is not speech."""
+    user, topic, convo = fixtures
+    stub = VisionStub()
+    monkeypatch.setattr(llm, "get_backend", lambda: stub)
+
+    await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic, text="",
+        modality="photo", photo_description=stub.description,
+    )
+
+    usage = await db.scalar(select(UsageDay).where(UsageDay.user_id == user.id))
+    assert usage.voice_turns == 0
+    assert convo.voice_turn_count == 0
+    assert convo.turn_count == 1

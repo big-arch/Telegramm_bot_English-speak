@@ -81,6 +81,40 @@ class GroqBackend:
         text = (response.choices[0].message.content or "").strip()
         return text, _usage(response)
 
+    async def describe_image(
+        self, *, image: bytes, mime: str, prompt: str, max_tokens: int
+    ) -> tuple[str, Usage]:
+        import base64
+
+        from bot.services.backends.base import VisionUnsupported
+
+        if not settings.groq_vision_model:
+            raise VisionUnsupported("GROQ_VISION_MODEL is empty")
+
+        data_uri = f"data:{mime};base64,{base64.b64encode(image).decode()}"
+        try:
+            response = await self.client.chat.completions.create(
+                model=settings.groq_vision_model,
+                max_tokens=max_tokens,
+                temperature=0.4,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_uri}},
+                        ],
+                    }
+                ],
+            )
+        except APIError as exc:
+            # A retired or text-only model reports this as a request error;
+            # treating it as "cannot see" lets the caller degrade instead of
+            # showing the learner a breakage.
+            raise VisionUnsupported(str(exc)) from exc
+
+        return (response.choices[0].message.content or "").strip(), _usage(response)
+
     async def complete_json(
         self, *, system: str, prompt: str, schema: type[BaseModel], max_tokens: int
     ) -> tuple[BaseModel | None, Usage]:

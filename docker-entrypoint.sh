@@ -11,23 +11,26 @@ echo "=============================================="
 echo " SpeakOut starting"
 echo "=============================================="
 
-echo "--> 1/3  applying database migrations"
-if ! alembic upgrade head; then
+echo "--> 1/4  checking the database connection"
+if ! python -m scripts.doctor; then
     echo ""
-    echo "!! MIGRATIONS FAILED"
-    echo "!! The database could not be reached or prepared. Check DB_DSN:"
-    echo "!!   - it must start with postgresql+asyncpg://  (not postgresql://)"
-    echo "!!   - use the Supabase SESSION pooler on port 5432, not 6543"
-    echo "!!   - the password must not contain @ # / : ? characters"
+    echo "!! Fix DB_DSN in the hosting dashboard and redeploy."
     exit 1
 fi
 
-echo "--> 2/3  seeding conversation topics"
+echo "--> 2/4  applying database migrations"
+if ! alembic upgrade head; then
+    echo ""
+    echo "!! MIGRATIONS FAILED - the database answered but could not be prepared."
+    exit 1
+fi
+
+echo "--> 3/4  seeding conversation topics"
 if ! python -m scripts.seed; then
     echo ""
     echo "!! SEEDING FAILED - the database is reachable but could not be written to"
     exit 1
 fi
 
-echo "--> 3/3  starting the bot"
+echo "--> 4/4  starting the bot"
 exec python -m bot

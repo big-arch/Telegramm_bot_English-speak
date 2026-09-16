@@ -2,7 +2,7 @@
 
 Разговорный английский в Telegram. Ты записываешь голосовое — ИИ-собеседник отвечает голосом, а в конце разговора даёт разбор.
 
-**Работает на бесплатных тарифах.** Два ключа, оба выдаются мгновенно без карты, дальше ничего не стоит.
+**Работает на бесплатных тарифах.** Нужен один ключ помимо токена бота, выдаётся мгновенно без карты, дальше ничего не стоит.
 
 > 👉 **Не хочешь держать компьютер включённым?** → [deploy/KOYEB.md](deploy/KOYEB.md) — только браузер, без терминала.
 > 👉 **Хочешь просто попробовать у себя?** → [START.md](START.md) — пошагово, без терминов.
@@ -32,12 +32,14 @@ SpeakOut построен вокруг памяти:
 sudo apt install ffmpeg        # или brew install ffmpeg
 
 make install
-cp .env.example .env           # BOT_TOKEN, GEMINI_API_KEY, GROQ_API_KEY
+cp .env.example .env           # BOT_TOKEN и GROQ_API_KEY — всё
 make setup                     # миграции + темы разговоров
 make run
 ```
 
-Ключи: [aistudio.google.com/apikey](https://aistudio.google.com/apikey) и [console.groq.com/keys](https://console.groq.com/keys). Оба бесплатны, карта не нужна.
+Ключ: [console.groq.com/keys](https://console.groq.com/keys). Бесплатно, без карты.
+
+Есть ключ [Gemini](https://aistudio.google.com/apikey)? Поставь `LLM_PROVIDER=gemini` — диалог станет заметно живее, тоже бесплатно. Ключ Groq всё равно нужен: распознавание речи идёт через него.
 
 Чтобы бот работал круглосуточно, а не пока включён ноутбук — [deploy/README.md](deploy/README.md).
 
@@ -47,7 +49,7 @@ make run
 
 | Роль | Бесплатно (по умолчанию) | Платная альтернатива |
 |---|---|---|
-| Диалог и разбор | `LLM_PROVIDER=gemini` — Gemini Flash, ~1500 запросов/день | `anthropic` — Claude Opus 5 |
+| Диалог и разбор | `LLM_PROVIDER=groq` — Llama 3.3 70B, тот же ключ что и для речи | `gemini` — Flash, тоже бесплатно, качество выше; `anthropic` — Claude Opus 5 |
 | Распознавание речи | `STT_PROVIDER=groq` — Whisper v3 turbo, ~8 часов аудио/день | `openai` |
 | Синтез речи | `TTS_PROVIDER=edge` — нейроголоса Microsoft, без ключа | `openai`, `elevenlabs` |
 | База | `sqlite+aiosqlite` — локальный файл | Supabase / Postgres |
@@ -55,7 +57,7 @@ make run
 При старте бот печатает, что он использует и сколько это стоит:
 
 ```
-providers: llm=gemini stt=groq tts=edge db=sqlite
+providers: llm=groq stt=groq tts=edge db=sqlite mode=polling
 billing: everything on free tiers — this run costs nothing
 ```
 
@@ -75,7 +77,7 @@ bot/
 └── services/
     ├── llm.py           два вызова: собеседник и оценщик
     ├── prompts.py       промпты — отдельно от провайдеров
-    ├── backends/        gemini (free) · anthropic
+    ├── backends/        groq (free) · gemini (free) · anthropic
     ├── stt.py           Whisper с таймкодами по словам (groq | openai)
     ├── tts.py           edge | openai | elevenlabs + ffmpeg + скорость
     ├── fluency.py       беглость речи из таймкодов — бесплатно, без модели
@@ -112,7 +114,9 @@ make test
 
 ## Лимиты бесплатного тарифа
 
-Квоты считаются на аккаунт, а не на пользователя бота. ~1500 запросов Gemini в день при двух запросах на реплику — это ~700 реплик, то есть примерно 50–70 разговоров в сутки на всех.
+Квоты считаются на аккаунт, а не на пользователя бота. Groq на бесплатном тарифе даёт около 8 часов аудио в сутки и тысячи запросов к модели — этого хватает на несколько десятков активных людей.
+
+Если упрёшься в лимит модели: `GROQ_ASSESSOR_MODEL=llama-3.1-8b-instant` поднимает дневной потолок в разы, потому что у младшей модели он заметно выше.
 
 `FREE_DAILY_TURNS=40` по умолчанию не даёт одному человеку выжечь дневную квоту до обеда.
 

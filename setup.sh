@@ -80,32 +80,29 @@ if [ -f .env ] && grep -q '^BOT_TOKEN=.\+' .env 2>/dev/null; then
   ok "Ключи уже настроены (файл .env). Чтобы изменить — открой .env в редакторе."
 else
   say ""
-  say "${BOLD}Теперь три ключа.${OFF} Все бесплатные, карта нигде не нужна."
+  say "${BOLD}Нужно два значения.${OFF} Оба бесплатные, карта нигде не нужна."
   say ""
-  say "  1. Токен бота     — @BotFather в Telegram → /mybots → твой бот → API Token"
-  say "  2. Ключ Gemini    — https://aistudio.google.com/apikey"
-  say "  3. Ключ Groq      — https://console.groq.com/keys"
+  say "  1. Токен бота  — @BotFather в Telegram → /mybots → твой бот → API Token"
+  say "  2. Ключ Groq   — https://console.groq.com/keys"
   say ""
-  say "Скопируй каждый и вставь сюда. Вставка в терминале: Cmd+V (Mac) или Ctrl+Shift+V (Linux)."
+  say "Один ключ Groq закрывает и распознавание речи, и сам разговор."
+  say ""
+  say "Вставка в терминале: Cmd+V (Mac) или Ctrl+Shift+V (Linux)."
   say "Текст при вставке может не отображаться — это нормально, просто нажми Enter."
   say ""
 
   read -r -p "1. Токен бота: " BOT_TOKEN
   [ -n "$BOT_TOKEN" ] || die "Токен пустой. Запусти скрипт снова."
 
-  read -r -p "2. Ключ Gemini: " GEMINI_API_KEY
-  [ -n "$GEMINI_API_KEY" ] || die "Ключ пустой. Запусти скрипт снова."
-
-  read -r -p "3. Ключ Groq: " GROQ_API_KEY
+  read -r -p "2. Ключ Groq: " GROQ_API_KEY
   [ -n "$GROQ_API_KEY" ] || die "Ключ пустой. Запусти скрипт снова."
 
   umask 077
   cat > .env <<ENV
 BOT_TOKEN=$BOT_TOKEN
-GEMINI_API_KEY=$GEMINI_API_KEY
 GROQ_API_KEY=$GROQ_API_KEY
 
-LLM_PROVIDER=gemini
+LLM_PROVIDER=groq
 STT_PROVIDER=groq
 TTS_PROVIDER=edge
 DB_DSN=sqlite+aiosqlite:///data/speakout.db

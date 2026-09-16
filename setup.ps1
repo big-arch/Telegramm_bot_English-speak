@@ -106,11 +106,12 @@ if ($hasEnv) {
     OK "Ключи уже настроены (файл .env). Чтобы изменить - открой .env в Блокноте."
 } else {
     Say ""
-    Say "Теперь три ключа. Все бесплатные, карта нигде не нужна."
+    Say "Нужно два значения. Оба бесплатные, карта нигде не нужна."
     Say ""
-    Say "  1. Токен бота  - @BotFather в Telegram -> /mybots -> твой бот -> API Token"
-    Say "  2. Ключ Gemini - https://aistudio.google.com/apikey"
-    Say "  3. Ключ Groq   - https://console.groq.com/keys"
+    Say "  1. Токен бота - @BotFather в Telegram -> /mybots -> твой бот -> API Token"
+    Say "  2. Ключ Groq  - https://console.groq.com/keys"
+    Say ""
+    Say "Один ключ Groq закрывает и распознавание речи, и сам разговор."
     Say ""
     Say "Вставка в это окно: Ctrl+V или правая кнопка мыши. Потом Enter."
     Say ""
@@ -118,18 +119,14 @@ if ($hasEnv) {
     $BOT_TOKEN = (Read-Host "1. Токен бота").Trim()
     if (-not $BOT_TOKEN) { Die "Токен пустой. Запусти скрипт снова." }
 
-    $GEMINI = (Read-Host "2. Ключ Gemini").Trim()
-    if (-not $GEMINI) { Die "Ключ пустой. Запусти скрипт снова." }
-
-    $GROQ = (Read-Host "3. Ключ Groq").Trim()
+    $GROQ = (Read-Host "2. Ключ Groq").Trim()
     if (-not $GROQ) { Die "Ключ пустой. Запусти скрипт снова." }
 
     $envText = @"
 BOT_TOKEN=$BOT_TOKEN
-GEMINI_API_KEY=$GEMINI
 GROQ_API_KEY=$GROQ
 
-LLM_PROVIDER=gemini
+LLM_PROVIDER=groq
 STT_PROVIDER=groq
 TTS_PROVIDER=edge
 DB_DSN=sqlite+aiosqlite:///data/speakout.db

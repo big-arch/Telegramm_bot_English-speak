@@ -1,10 +1,11 @@
 """Typed configuration. Everything secret comes from the environment.
 
-Defaults are the **free stack**: Gemini for dialogue, Groq Whisper for speech
-recognition, Microsoft Edge neural voices for speech, SQLite for storage. That
-combination costs nothing and needs two API keys, both issued instantly without
-a card. Every one of them can be swapped for a paid provider by changing one
-variable.
+Defaults are the **free stack**: Groq for both dialogue and speech recognition,
+Microsoft Edge neural voices for speech, SQLite for storage.
+
+That combination costs nothing and needs exactly one API key beyond the bot
+token, because Groq covers both speech recognition and dialogue. Gemini and
+Claude are one-variable swaps for better dialogue quality.
 """
 
 from __future__ import annotations
@@ -29,7 +30,13 @@ class Settings(BaseSettings):
     db_dsn: str = "sqlite+aiosqlite:///data/speakout.db"
 
     # --- Dialogue and assessment ---
-    llm_provider: str = "gemini"  # gemini (free) | anthropic
+    # groq is the default because one key covers both speech recognition and
+    # dialogue. Gemini is a one-variable swap for better dialogue quality.
+    llm_provider: str = "groq"  # groq (free) | gemini (free) | anthropic
+    groq_chat_model: str = "llama-3.3-70b-versatile"
+    # Swap the assessor to llama-3.1-8b-instant to raise the daily ceiling a
+    # long way — the free tier allows far more requests to the smaller model.
+    groq_assessor_model: str = "llama-3.3-70b-versatile"
     gemini_api_key: SecretStr | None = None
     gemini_chat_model: str = "gemini-2.5-flash"
     gemini_assessor_model: str = "gemini-2.5-flash"
@@ -110,6 +117,8 @@ class Settings(BaseSettings):
         readable message, rather than inside a handler an hour later.
         """
         missing = []
+        if self.llm_provider == "groq" and self.groq_api_key is None:
+            missing.append("GROQ_API_KEY (LLM_PROVIDER=groq)")
         if self.llm_provider == "gemini" and self.gemini_api_key is None:
             missing.append("GEMINI_API_KEY (LLM_PROVIDER=gemini)")
         if self.llm_provider == "anthropic" and self.anthropic_api_key is None:

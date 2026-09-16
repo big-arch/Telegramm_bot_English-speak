@@ -18,6 +18,11 @@ __all__ = ["get_backend", "LLMBackend", "Usage"]
 def get_backend() -> LLMBackend:
     provider = settings.llm_provider.lower()
 
+    if provider == "groq":
+        from bot.services.backends.groq_backend import GroqBackend
+
+        return GroqBackend()
+
     if provider == "gemini":
         from bot.services.backends.gemini_backend import GeminiBackend
 
@@ -29,5 +34,6 @@ def get_backend() -> LLMBackend:
         return AnthropicBackend()
 
     raise RuntimeError(
-        f"Unknown LLM_PROVIDER={provider!r}. Supported: gemini (free), anthropic."
+        f"Unknown LLM_PROVIDER={provider!r}. "
+        "Supported: groq (free, works everywhere), gemini (free), anthropic."
     )

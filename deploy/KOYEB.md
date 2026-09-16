@@ -57,13 +57,16 @@
 
 Если ты их уже получал — пропусти.
 
-| Ключ | Где | Как выглядит |
+Нужно **всего два значения**.
+
+| Что | Где взять | Как выглядит |
 |---|---|---|
 | Токен бота | Telegram → **@BotFather** → `/mybots` → SpeakOutEducation_bot → **API Token** | `1234567890:AAF-...` |
-| Gemini | **https://aistudio.google.com/apikey** → Create API key | `AIza...` |
-| Groq | **https://console.groq.com/keys** → Create API Key | `gsk_...` |
+| Ключ Groq | **https://console.groq.com/keys** → Create API Key | `gsk_...` |
 
-Оба ключа бесплатные, карта не нужна.
+Один ключ Groq закрывает и распознавание речи, и сам разговор. Бесплатно, без карты, работает во всех странах.
+
+> Если у тебя есть ключ **Gemini** (новый формат — начинается на `AQ.`), его можно подключить и получить более живой диалог: добавь переменную `GEMINI_API_KEY` и поменяй `LLM_PROVIDER` на `gemini`. Ключ Groq всё равно нужен — распознавание речи идёт через него.
 
 ---
 
@@ -91,14 +94,13 @@
    | Имя | Значение |
    |---|---|
    | `BOT_TOKEN` | токен от BotFather |
-   | `GEMINI_API_KEY` | ключ Gemini |
    | `GROQ_API_KEY` | ключ Groq |
    | `DB_DSN` | строка из части 1 (та, что с `+asyncpg`) |
-   | `LLM_PROVIDER` | `gemini` |
+   | `LLM_PROVIDER` | `groq` |
    | `STT_PROVIDER` | `groq` |
    | `TTS_PROVIDER` | `edge` |
 
-   Для `BOT_TOKEN`, `GEMINI_API_KEY`, `GROQ_API_KEY` и `DB_DSN` поставь тип **Secret**, если такой переключатель есть.
+   Для `BOT_TOKEN`, `GROQ_API_KEY` и `DB_DSN` поставь тип **Secret**, если такой переключатель есть.
 
 9. **Deploy**. Сборка займёт 3–5 минут. В логах увидишь строки вида `Successfully built`.
 
@@ -121,7 +123,7 @@
 4. В логах должно появиться:
 
    ```
-   providers: llm=gemini stt=groq tts=edge db=postgres mode=webhook
+   providers: llm=groq stt=groq tts=edge db=postgres mode=webhook
    billing: everything on free tiers — this run costs nothing
    webhook set to https://speakout-....koyeb.app/tg/webhook
    listening on 0.0.0.0:8000
@@ -157,7 +159,7 @@ Koyeb на бесплатном плане **усыпляет сервис по�
 | В логах `prepared statement ... does not exist` | В Supabase скопирован **Transaction** pooler вместо **Session**. Вернись к части 1, пункт 8 |
 | Бот молчит, в логах `mode=polling` | Не задан `WEBHOOK_BASE_URL`. Часть 4 |
 | Бот отвечает текстом, но не голосом | Так не должно быть — в Docker-образе ffmpeg есть. Покажи мне логи |
-| `resource exhausted` | Кончилась дневная бесплатная квота Gemini. Сбросится ночью |
+| `rate limit` / `429` в логах | Кончилась дневная бесплатная квота Groq. Сбросится через сутки. Можно снизить нагрузку: поставь `GROQ_ASSESSOR_MODEL` = `llama-3.1-8b-instant` |
 
 Если застрял — **открой в Koyeb вкладку Logs, скопируй последние 20 строк и пришли мне**.
 

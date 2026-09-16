@@ -1,9 +1,15 @@
-"""Google Gemini backend — the free option.
+"""Google Gemini backend — free, and better at dialogue than the Llama default.
 
 Free tier as of 2026: roughly 1,500 requests/day and 10-15 requests/minute on
 the Flash models, with no card required. One conversational turn costs two
 requests (partner + assessor), so the daily allowance is on the order of 700
-turns — comfortably more than a launch needs, and it costs nothing.
+turns.
+
+Note on keys: AI Studio now issues "auth keys" beginning `AQ.` rather than the
+older `AIza` standard keys. This backend uses the official SDK, which talks to
+the native endpoint — the one place the newer keys work. Routing Gemini through
+its OpenAI-compatible shim instead would return 401 for anyone with a current
+key, so don't.
 
 Thinking is disabled: a chat turn is not reasoning work, and leaving it on
 spends quota and latency on something the learner never sees.

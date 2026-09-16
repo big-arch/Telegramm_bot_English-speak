@@ -7,6 +7,7 @@ have caught a Postgres-only construct sneaking into the free SQLite stack.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select
@@ -538,3 +539,135 @@ async def test_a_refused_subject_stays_silent_rather_than_apologetic(
         text="Can you send me your legs and tights?", modality="voice",
     )
     assert result.photo_query is None
+
+
+# --------------------------------------------------------------------------- #
+# Finding the picture
+# --------------------------------------------------------------------------- #
+
+
+class _FakeResponse:
+    def __init__(self, payload=None, *, content_type="application/json", content=b"x" * 2048):
+        self._payload = payload
+        self.headers = {"content-type": content_type}
+        self.content = content
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not json")
+        return self._payload
+
+
+def _wiki_payload(title="Hamburger", source="https://upload.wikimedia.org/a/ham.jpg"):
+    return {"query": {"pages": {"1": {"index": 1, "title": title,
+                                      "thumbnail": {"source": source}}}}}
+
+
+@pytest.mark.asyncio
+async def test_a_failing_archive_does_not_take_the_feature_with_it(monkeypatch):
+    """The production failure: one source went quiet and photos stopped
+    entirely. Wikipedia is preferred, but preference is not dependence."""
+    from bot.services import images
+
+    async def get(self, url, **kwargs):
+        if url == images.WIKIPEDIA_API:
+            raise httpx.ConnectError("boom")
+        if url == images.COMMONS_API:
+            return _FakeResponse({"query": {"pages": {"1": {
+                "index": 1, "title": "File:Burger.jpg",
+                "imageinfo": [{"thumburl": "https://upload.wikimedia.org/b/burger.jpg"}],
+            }}}})
+        return _FakeResponse({"results": []})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+
+    url, notes = await images.look_up("hamburger")
+    assert url == "https://upload.wikimedia.org/b/burger.jpg"
+    # And the failure is reported rather than swallowed — this module runs
+    # where nobody in the conversation can read the logs.
+    assert any("wikipedia" in note and "ConnectError" in note for note in notes)
+
+
+@pytest.mark.asyncio
+async def test_the_earliest_source_that_answered_wins(monkeypatch):
+    """Racing must not cost quality: whoever replies first, the encyclopaedia's
+    curated lead image still beats an archive keyword match."""
+    from bot.services import images
+
+    async def get(self, url, **kwargs):
+        if url == images.WIKIPEDIA_API:
+            return _FakeResponse(_wiki_payload())
+        if url == images.COMMONS_API:
+            return _FakeResponse({"query": {"pages": {"1": {
+                "index": 1, "title": "File:Other.jpg",
+                "imageinfo": [{"thumburl": "https://upload.wikimedia.org/c/other.jpg"}],
+            }}}})
+        return _FakeResponse({"results": [{"url": "https://example.com/ov.jpg"}]})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+
+    url, _ = await images.look_up("hamburger")
+    assert url == "https://upload.wikimedia.org/a/ham.jpg"
+
+
+@pytest.mark.asyncio
+async def test_a_picture_is_drawn_only_after_every_archive_came_up_empty(monkeypatch):
+    """A real photograph is worth more in a lesson than a generated one, so
+    generation is the last resort — never the shortcut."""
+    from bot.services import images
+
+    calls = []
+
+    async def get(self, url, **kwargs):
+        calls.append(url)
+        if url.startswith("https://image.pollinations.ai/"):
+            return _FakeResponse(content_type="image/jpeg")
+        if url == images.OPENVERSE_API:
+            return _FakeResponse({"results": []})
+        return _FakeResponse({"query": {"pages": {}}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+
+    url, notes = await images.look_up("a cat wearing a chef's hat")
+    assert url is not None and url.startswith("https://image.pollinations.ai/")
+    assert any("generated" in note for note in notes)
+    # Every archive was asked first, on the full phrase and on the short one.
+    assert calls.index(images.WIKIPEDIA_API) < calls.index(url)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_subject_never_reaches_an_archive_or_a_generator(monkeypatch):
+    """The filter has to sit under the generator too — generation will happily
+    draw whatever it is asked for."""
+    from bot.services import images
+
+    async def get(self, url, **kwargs):  # pragma: no cover - must never run
+        raise AssertionError(f"refused query still reached {url}")
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+
+    url, notes = await images.look_up("your legs in lingerie")
+    assert url is None
+    assert notes and "refused" in notes[0]
+
+
+@pytest.mark.asyncio
+async def test_a_non_image_response_is_not_offered_to_telegram(monkeypatch):
+    """Telegram fetches these URLs itself and rejects anything that is not an
+    image, so an HTML error page must never be passed off as a photo."""
+    from bot.services import images
+
+    async def get(self, url, **kwargs):
+        if url.startswith("https://image.pollinations.ai/"):
+            return _FakeResponse(content_type="text/html")
+        if url == images.OPENVERSE_API:
+            return _FakeResponse({"results": [{"url": "https://example.com/page.html"}]})
+        return _FakeResponse({"query": {"pages": {}}})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+
+    url, _ = await images.look_up("something obscure")
+    assert url is None

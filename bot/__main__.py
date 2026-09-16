@@ -41,6 +41,7 @@ COMMANDS = [
     BotCommand(command="talk", description="Начать разговор"),
     BotCommand(command="finish", description="Закончить и получить разбор"),
     BotCommand(command="review", description="Повторить слова"),
+    BotCommand(command="photo", description="Показать фото: /photo hamburger"),
     BotCommand(command="progress", description="Мой прогресс"),
     BotCommand(command="mistakes", description="Мои ошибки"),
     BotCommand(command="settings", description="Настройки"),

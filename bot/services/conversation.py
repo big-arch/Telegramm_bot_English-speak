@@ -118,6 +118,11 @@ async def process_turn(
     # synthesiser reading "bracket show colon brooklyn bridge" out loud is
     # worse than no picture at all.
     reply, photo_query = images.extract_request(reply)
+    if photo_query is None and not is_photo:
+        # The model was asked to emit a marker and did not. Smaller models drop
+        # instructions from deep inside a long system prompt, so an outright
+        # request is honoured from code instead of being left to compliance.
+        photo_query = images.detect_request(text)
 
     turn = Turn(
         session_id=convo.id,

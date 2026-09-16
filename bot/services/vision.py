@@ -91,7 +91,10 @@ def as_history_note(description: str) -> str:
     return (
         "[The learner has just sent you a photograph. You can see it. "
         f"It shows: {description}]\n\n"
-        "React to it the way a friend would when shown a picture: say one "
-        "specific thing you notice, then ask them about it. Do not list "
-        "everything in the photo back to them — they know what is in it."
+        "Reply in ONE OR TWO sentences, the way a friend does when shown a "
+        "picture: name the single thing that caught your eye, then ask them "
+        "something about it. Do NOT describe the photo back to them and do NOT "
+        "list what is in it — they took it, they know. Wrong: \"I see a sunset "
+        "with pine trees and clouds.\" Right: \"Those clouds are unreal. Where "
+        "was this taken?\""
     )

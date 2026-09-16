@@ -61,6 +61,59 @@ def extract_request(reply: str) -> tuple[str, str | None]:
     return cleaned, query or None
 
 
+# When the learner asks outright, the picture must not depend on the model
+# choosing to emit a marker. Smaller free-tier models drop instructions buried
+# in a long system prompt, and "show me New York" answered with "I can't send
+# photos" is the exact failure this feature exists to prevent.
+_ASK_PATTERNS = (
+    re.compile(
+        # "me" is required: "I want to show my friend the photos" is not a
+        # request addressed to the tutor.
+        r"\b(?:can\s+you\s+|could\s+you\s+|please\s+)?"
+        r"(?:show|send)\s+me\s+"
+        r"(?:a\s+|an\s+|the\s+)?(?:photo|photos|picture|pictures|image|images|pic)?\s*"
+        r"(?:of\s+)?(?P<q>.+)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bwhat\s+(?:do|does)\s+(?P<q>.+?)\s+look\s+like", re.IGNORECASE),
+    re.compile(r"\bcan\s+i\s+see\s+(?:a\s+|an\s+|the\s+)?(?P<q>.+)", re.IGNORECASE),
+    # Russian, in case they slip into it — the bot still answers in English.
+    re.compile(r"\bпокажи(?:те)?\s+(?:мне\s+)?(?:фото\s+)?(?P<q>.+)", re.IGNORECASE),
+)
+
+_TRAILING_JUNK = re.compile(r"[\s,.!?;:]+$")
+_FILLER = re.compile(r"\b(?:please|pls|now|to\s+me)\b", re.IGNORECASE)
+# Stripped uniformly rather than inside each pattern, which had them
+# disagreeing about whether "the" survived. A search engine does not want it
+# either.
+_LEADING_ARTICLE = re.compile(r"^(?:a|an|the)\s+", re.IGNORECASE)
+
+
+def detect_request(utterance: str) -> str | None:
+    """Pull a photo subject out of an explicit request, or None.
+
+    Deliberately conservative: it fires on someone plainly asking to be shown
+    something, not on any mention of a place. A spurious picture is more
+    jarring than a missing one.
+    """
+    text = (utterance or "").strip()
+    if not text or len(text) > 200:
+        return None
+
+    for pattern in _ASK_PATTERNS:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        query = _FILLER.sub(" ", match.group("q"))
+        query = _TRAILING_JUNK.sub("", query).strip()
+        query = _LEADING_ARTICLE.sub("", query)
+        query = re.sub(r"\s{2,}", " ", query).strip()
+        # One or two stray words are not a subject worth searching for.
+        if 2 <= len(query) <= 60 and any(c.isalpha() for c in query):
+            return query
+    return None
+
+
 def _is_photo(title: str) -> bool:
     lowered = title.lower()
     return not any(word in lowered for word in UNWANTED)

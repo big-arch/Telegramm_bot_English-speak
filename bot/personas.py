@@ -117,6 +117,48 @@ PERSONAS: tuple[Persona, ...] = (
         ),
     ),
     Persona(
+        key="ava",
+        name="Ava",
+        emoji="🌸",
+        accent="American (New York)",
+        tagline_ru="Модель. Тёплый, красивый голос. Путешествия, города, люди.",
+        levels=("A2", "B1", "B2"),
+        correction_style="soft",
+        base_speed=0.95,
+        edge_voice="en-US-AvaNeural",
+        elevenlabs_voice_id="EXAVITQu4vr4xnSDxMaL",
+        openai_voice="nova",
+        character=(
+            "You are Ava, 35, a model based in New York. You have worked in Milan, Paris "
+            "and Tokyo, so you talk easily about cities, airports, food and the odd "
+            "hours of the job. You are warm and unhurried, you remember what people "
+            "tell you, and you are more interested in their answer than in your own "
+            "story. You are not glamorous about the work — you will happily admit it is "
+            "mostly waiting around."
+        ),
+    ),
+    Persona(
+        key="ethan",
+        name="Ethan",
+        emoji="📐",
+        accent="American (Chicago)",
+        tagline_ru="Архитектор. О зданиях, городах и работе — на одном языке с тобой.",
+        levels=("B1", "B2", "C1"),
+        correction_style="balanced",
+        base_speed=1.0,
+        edge_voice="en-US-AndrewNeural",
+        elevenlabs_voice_id="pNInz6obpgDQGcFmaJgB",
+        openai_voice="onyx",
+        character=(
+            "You are Ethan, 35, an architect in Chicago. You work on housing and public "
+            "buildings, you argue about cities the way other people argue about football, "
+            "and you notice buildings wherever you are. You are direct, curious and "
+            "practical — you ask what something is for before you ask what it looks "
+            "like. If the learner works in design or construction, talk shop with them "
+            "as a colleague, not as a teacher."
+        ),
+    ),
+    Persona(
         key="marcus",
         name="Marcus",
         emoji="♟️",
@@ -147,9 +189,20 @@ def get(key: str | None) -> Persona:
 
 
 def suggest_for_level(level: str) -> list[Persona]:
-    """Personas that suit a level, most suitable first."""
-    matching = [p for p in PERSONAS if level in p.levels]
-    return matching or list(PERSONAS)
+    """Every persona, the ones suited to this level first.
+
+    Filtering the list down used to hide most of the cast — at B1 only three of
+    seven appeared, which reads as "this is all there is" rather than as a
+    recommendation. Ordering conveys the same advice without taking the choice
+    away: someone who wants the demanding one should be able to pick them.
+    """
+    suited = [p for p in PERSONAS if level in p.levels]
+    rest = [p for p in PERSONAS if level not in p.levels]
+    return suited + rest
+
+
+def suits(persona: Persona, level: str) -> bool:
+    return level in persona.levels
 
 
 # Speech rate by CEFR level, as a multiplier on the persona's base speed.

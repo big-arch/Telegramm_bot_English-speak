@@ -26,10 +26,12 @@ def level_kb() -> InlineKeyboardMarkup:
 
 
 def persona_kb(level: str) -> InlineKeyboardMarkup:
+    """All personas, the ones suited to this level marked and listed first."""
     kb = InlineKeyboardBuilder()
     for persona in personas_mod.suggest_for_level(level):
+        mark = "⭐ " if personas_mod.suits(persona, level) else ""
         kb.button(
-            text=f"{persona.emoji} {persona.name} · {persona.accent}",
+            text=f"{mark}{persona.emoji} {persona.name} · {persona.accent}",
             callback_data=PersonaCB(key=persona.key),
         )
     kb.adjust(1)

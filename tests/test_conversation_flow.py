@@ -369,3 +369,58 @@ async def test_a_reply_asking_for_a_photo_stores_the_clean_text(db, fixtures, mo
     assert "SHOW" not in result.reply
     turn = await db.scalar(select(Turn).where(Turn.user_id == user.id))
     assert "SHOW" not in turn.assistant_text
+
+
+def test_an_outright_request_for_a_photo_is_detected_in_code():
+    """The feature cannot depend on a smaller model obeying an instruction
+    buried in a long system prompt — "show me New York" answered with "I can't
+    send photos" is the exact failure it exists to prevent."""
+    from bot.services.images import detect_request
+
+    cases = {
+        "Show me New York": "New York",
+        "show me a photo of the Eiffel Tower": "Eiffel Tower",
+        "Can you send me a picture of Big Ben?": "Big Ben",
+        "What does a London bus look like?": "London bus",
+        "can I see the Golden Gate Bridge": "Golden Gate Bridge",
+        "покажи мне Нью-Йорк": "Нью-Йорк",
+    }
+    for utterance, expected in cases.items():
+        assert detect_request(utterance) == expected, utterance
+
+
+def test_ordinary_conversation_does_not_trigger_a_photo():
+    """A spurious picture is more jarring than a missing one."""
+    from bot.services.images import detect_request
+
+    for utterance in (
+        "I went to New York last year",
+        "New York is my favourite city",
+        "It looks like rain today",
+        "I want to show my friend the photos",  # not addressed to the tutor
+        "",
+        "show",
+    ):
+        assert detect_request(utterance) is None, utterance
+
+
+@pytest.mark.asyncio
+async def test_asking_to_be_shown_something_yields_a_photo_even_without_a_marker(
+    db, fixtures, monkeypatch
+):
+    user, topic, convo = fixtures
+
+    class SilentStub(StubBackend):
+        async def complete(self, *, system, messages, max_tokens):
+            self.reply_calls += 1
+            self.last_system = system
+            # The failure mode observed in production.
+            return "I'm sorry, but I can't send photos.", Usage(10, 5)
+
+    monkeypatch.setattr(llm, "get_backend", lambda: SilentStub())
+
+    result = await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic,
+        text="Send me a photo of New York", modality="voice",
+    )
+    assert result.photo_query == "New York"

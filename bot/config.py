@@ -59,10 +59,16 @@ class Settings(BaseSettings):
     # --- Hosting ---
     # Set WEBHOOK_BASE_URL to run in webhook mode (required on hosts that put
     # the service to sleep when idle — Telegram's own POST is what wakes it).
-    # Leave empty to poll, which is right for a laptop or a always-on VM.
+    # Leave empty to poll, which is right for a laptop or an always-on VM.
     webhook_base_url: str | None = None
     webhook_secret: SecretStr | None = None
     port: int = 8000
+
+    # Render injects this into every web service. Picking it up automatically
+    # removes a whole deployment step — and with it the most common way to end
+    # up with a silent bot: deploying, forgetting to paste the URL back in, and
+    # sitting in polling mode where nothing ever wakes the service.
+    render_external_url: str | None = None
 
     # --- Ops ---
     admin_ids: list[int] = Field(default_factory=list)
@@ -85,6 +91,7 @@ class Settings(BaseSettings):
     @field_validator(
         "redis_url",
         "webhook_base_url",
+        "render_external_url",
         "webhook_secret",
         "elevenlabs_api_key",
         "openai_api_key",
@@ -103,8 +110,17 @@ class Settings(BaseSettings):
         return self.db_dsn.startswith("sqlite")
 
     @property
+    def public_base_url(self) -> str | None:
+        """Where Telegram should POST updates, if anywhere.
+
+        An explicit setting always wins, so a platform-provided URL can be
+        overridden (a custom domain, say) without editing code.
+        """
+        return self.webhook_base_url or self.render_external_url
+
+    @property
     def use_webhook(self) -> bool:
-        return bool(self.webhook_base_url)
+        return bool(self.public_base_url)
 
     @property
     def webhook_path(self) -> str:

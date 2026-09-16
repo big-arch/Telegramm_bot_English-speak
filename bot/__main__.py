@@ -146,7 +146,7 @@ async def run_polling(bot: Bot, dp: Dispatcher) -> None:
 
 
 def webhook_url() -> str:
-    base = (settings.webhook_base_url or "").rstrip("/")
+    base = (settings.public_base_url or "").rstrip("/")
     if not base.startswith("https://"):
         raise SystemExit(
             f"WEBHOOK_BASE_URL must start with https:// — got {base!r}.\n"

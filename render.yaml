@@ -1,0 +1,54 @@
+# Render Blueprint — the whole deployment in one file.
+#
+# With this, deploying is: open the Blueprint link, paste three secrets, click
+# Apply. Everything else — runtime, plan, region, health check, the non-secret
+# environment — is already decided here, so there is nothing to mistype.
+#
+# The webhook URL is deliberately absent: Render sets RENDER_EXTERNAL_URL on
+# every web service and the bot reads it, so there is no second pass where you
+# copy the address back into the settings.
+
+services:
+  - type: web
+    name: speakout
+    runtime: docker            # must be docker — the image carries ffmpeg,
+                               # without which the bot has no voice
+    plan: free
+    region: frankfurt
+    branch: claude/exciting-bohr-i24d3l
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz  # also what an uptime monitor should ping
+    autoDeploy: true
+
+    envVars:
+      # Prompted for once, at Blueprint creation. Never stored in git.
+      - key: BOT_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      # postgresql+asyncpg://... from Supabase, SESSION-mode pooler (port 5432).
+      # Transaction mode (6543) breaks asyncpg's prepared statements and fails
+      # intermittently in a way that is very hard to diagnose.
+      - key: DB_DSN
+        sync: false
+
+      # Optional. Leave blank to run dialogue on Groq too; fill it in and
+      # change LLM_PROVIDER to gemini for livelier conversation.
+      - key: GEMINI_API_KEY
+        sync: false
+
+      - key: LLM_PROVIDER
+        value: groq
+      - key: STT_PROVIDER
+        value: groq
+      - key: TTS_PROVIDER
+        value: edge
+
+      # Free-tier quotas are per account, not per user. This stops one
+      # enthusiastic learner from spending the day's allowance before lunch.
+      - key: FREE_DAILY_TURNS
+        value: 40
+      - key: MAX_VOICE_SECONDS
+        value: 120
+      - key: LOG_LEVEL
+        value: INFO

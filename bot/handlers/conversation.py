@@ -35,6 +35,7 @@ from bot.texts import (
     LISTENING,
     LOOKING,
     NO_ACTIVE_SESSION,
+    PHOTO_NOT_FOUND,
     PHOTO_NOT_READABLE,
     PHOTO_NOT_SUPPORTED,
     SEND_VOICE_NOT_FILE,
@@ -152,14 +153,21 @@ async def _reply(
     — which is how a person shows you something.
     """
     if photo_query:
+        sent = False
         url = await images.find(photo_query)
         if url:
             try:
                 await bot.send_photo(chat_id, url)
+                sent = True
             except TelegramAPIError:
                 # Telegram fetches the URL itself and sometimes refuses one.
-                # A missing picture costs the learner nothing but the picture.
                 logger.info("could not send photo for %r", photo_query)
+        if not sent:
+            # We only get here having decided a picture was owed, which means
+            # the tutor has probably just said one was coming. Saying nothing
+            # makes it look broken; owning it turns the miss into the better
+            # exercise — they describe it instead.
+            await bot.send_message(chat_id, PHOTO_NOT_FOUND)
 
     persona = personas_mod.get(convo.persona_key)
     await send_spoken(

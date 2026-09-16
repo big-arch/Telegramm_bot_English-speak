@@ -75,6 +75,13 @@ PHOTO_NOT_SUPPORTED = (
     "Описывать картинку — отдельный навык, его как раз и проверяют на экзаменах."
 )
 
+# In English on purpose: this one interrupts the conversation, not the
+# interface, and switching to Russian mid-turn would break the spell.
+PHOTO_NOT_FOUND = (
+    "<i>(I couldn't find a good photo of that one — describe it to me instead? "
+    "What do you picture?)</i>"
+)
+
 PHOTO_NOT_READABLE = (
     "Не смог разглядеть фото. Попробуй отправить другое — "
     "или опиши это словами, так даже полезнее."

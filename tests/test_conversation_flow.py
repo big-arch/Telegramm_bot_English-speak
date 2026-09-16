@@ -389,6 +389,72 @@ def test_an_outright_request_for_a_photo_is_detected_in_code():
         assert detect_request(utterance) == expected, utterance
 
 
+def test_a_request_is_cut_down_to_a_searchable_subject():
+    """From a real session. The capture has to be greedy to survive speech-to-
+    text's missing punctuation, so everything after the subject is trimmed —
+    Commons answers "just ties. Can you do it" with nothing at all."""
+    from bot.services.images import detect_request
+
+    cases = {
+        "you can send me just ties. Can you do it?": "ties",
+        "Show me the Colosseum and tell me about it": "Colosseum",
+        "please send me a picture of a red panda now": "red panda",
+        "Can you show me Tokyo? I've never been.": "Tokyo",
+    }
+    for utterance, expected in cases.items():
+        assert detect_request(utterance) == expected, utterance
+
+
+def test_a_promised_photo_is_looked_up_even_without_the_marker():
+    """The failure from the screenshot: the tutor wrote "Sure, here's a picture
+    of a pair of shiny black tights" and sent nothing. Once the promise is made
+    to the learner, the promise decides — not whether the model remembered its
+    instructions."""
+    from bot.services.images import detect_promise
+
+    cases = {
+        "Sure, here's a picture of a pair of shiny black tights. How does it look?":
+            "pair of shiny black tights",
+        "Here is a photo of the Brooklyn Bridge!": "Brooklyn Bridge",
+        "Let me show you my favourite building in Chicago": "my favourite building in Chicago",
+        "This is a picture of a typical London pub.": "typical London pub",
+    }
+    for reply, expected in cases.items():
+        assert detect_promise(reply) == expected, reply
+
+    # An ordinary reply must not summon a picture out of nowhere.
+    for reply in ("I love that photo you sent.", "What does it look like?", ""):
+        assert detect_promise(reply) is None, reply
+
+
+def test_the_tutor_will_not_go_looking_for_photos_of_itself_or_for_porn():
+    """Commons is a public archive, not a curated classroom library, and the
+    moment the tutor can deliver what it is asked for, the request becomes a
+    steering wheel. Ordinary subjects must stay untouched."""
+    from bot.services.images import allowed
+
+    for query in (
+        "your legs",
+        "your face",
+        "yourself in tights",
+        "a photo of you",
+        "send me a selfie",
+        "naked woman",
+        "lingerie model",
+    ):
+        assert not allowed(query), query
+
+    for query in (
+        "black tights",
+        "your city",          # the persona's home town is a fine thing to show
+        "your favourite building",
+        "New York",
+        "a flamingo's legs",  # anatomy in a vocabulary lesson is not the problem
+        "the human body",
+    ):
+        assert allowed(query), query
+
+
 def test_ordinary_conversation_does_not_trigger_a_photo():
     """A spurious picture is more jarring than a missing one."""
     from bot.services.images import detect_request
@@ -424,3 +490,51 @@ async def test_asking_to_be_shown_something_yields_a_photo_even_without_a_marker
         text="Send me a photo of New York", modality="voice",
     )
     assert result.photo_query == "New York"
+
+
+@pytest.mark.asyncio
+async def test_a_tutor_who_announces_a_photo_actually_sends_one(db, fixtures, monkeypatch):
+    """The reported bug, end to end: the reply promised a picture, the marker
+    was missing, and nothing arrived."""
+    user, topic, convo = fixtures
+
+    class PromisingStub(StubBackend):
+        async def complete(self, *, system, messages, max_tokens):
+            self.reply_calls += 1
+            self.last_system = system
+            return (
+                "Sure, here's a picture of a pair of shiny black tights. "
+                "How do they look in the light?",
+                Usage(10, 5),
+            )
+
+    monkeypatch.setattr(llm, "get_backend", lambda: PromisingStub())
+
+    result = await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic,
+        text="Okay, can you send me just tights?", modality="voice",
+    )
+    assert result.photo_query == "pair of shiny black tights"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_subject_stays_silent_rather_than_apologetic(
+    db, fixtures, monkeypatch
+):
+    """The tutor's own words have already declined; following them with "I
+    couldn't find that photo" would reframe a boundary as a failed search."""
+    user, topic, convo = fixtures
+
+    class DecliningStub(StubBackend):
+        async def complete(self, *, system, messages, max_tokens):
+            self.reply_calls += 1
+            self.last_system = system
+            return "I can't share personal photos — but tell me about them.", Usage(10, 5)
+
+    monkeypatch.setattr(llm, "get_backend", lambda: DecliningStub())
+
+    result = await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic,
+        text="Can you send me your legs and tights?", modality="voice",
+    )
+    assert result.photo_query is None

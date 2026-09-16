@@ -118,11 +118,21 @@ async def process_turn(
     # synthesiser reading "bracket show colon brooklyn bridge" out loud is
     # worse than no picture at all.
     reply, photo_query = images.extract_request(reply)
+    if photo_query is None:
+        # The tutor wrote "here's a picture of X" and forgot the marker. The
+        # promise is already made to the learner, so it is the promise that
+        # decides, not whether the model remembered its instructions.
+        photo_query = images.detect_promise(reply)
     if photo_query is None and not is_photo:
-        # The model was asked to emit a marker and did not. Smaller models drop
-        # instructions from deep inside a long system prompt, so an outright
-        # request is honoured from code instead of being left to compliance.
+        # Nor did it acknowledge an outright request. Smaller models drop
+        # instructions from deep inside a long system prompt, so the learner's
+        # own words are honoured from code rather than left to compliance.
         photo_query = images.detect_request(text)
+    if photo_query is not None and not images.allowed(photo_query):
+        # Refused subjects go quiet rather than apologetic: the tutor's own
+        # words have already declined, and "I couldn't find that photo" would
+        # reframe a boundary as a failed search.
+        photo_query = None
 
     turn = Turn(
         session_id=convo.id,

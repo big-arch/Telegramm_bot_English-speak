@@ -119,3 +119,68 @@ def test_password_failure_does_not_send_you_back_to_the_host(capsys):
     out = capsys.readouterr().out
     assert "host and the project" in out and "correct" in out
     assert "Reset database password" in out
+
+
+def test_model_check_reports_a_retired_name_and_lists_alternatives(monkeypatch):
+    """Providers retire models on a few months' notice. A dead name fails at
+    the first real request — for this bot, the first voice message a learner
+    sends — so it has to be caught at startup instead."""
+    import httpx
+
+    import scripts.doctor as doctor
+    from bot.config import settings
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": [{"id": "openai/gpt-oss-120b"}, {"id": "whisper-large-v3-turbo"}]}
+
+    monkeypatch.setattr(settings, "llm_provider", "groq")
+    monkeypatch.setattr(settings, "stt_provider", "groq")
+    monkeypatch.setattr(settings, "groq_chat_model", "llama-3.3-70b-versatile")
+    monkeypatch.setattr(settings, "groq_assessor_model", "llama-3.3-70b-versatile")
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResponse())
+
+    issues = doctor.check_groq_models()
+    assert any("no longer exists" in i for i in issues)
+    assert any("openai/gpt-oss-120b" in i for i in issues)
+    # The whisper model must not be offered as a chat replacement.
+    assert not any("Available models right now: whisper" in i for i in issues)
+
+
+def test_model_check_is_quiet_when_everything_exists(monkeypatch):
+    import httpx
+
+    import scripts.doctor as doctor
+    from bot.config import settings
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": [{"id": "openai/gpt-oss-120b"}, {"id": "whisper-large-v3-turbo"}]}
+
+    monkeypatch.setattr(settings, "llm_provider", "groq")
+    monkeypatch.setattr(settings, "stt_provider", "groq")
+    monkeypatch.setattr(settings, "groq_chat_model", "openai/gpt-oss-120b")
+    monkeypatch.setattr(settings, "groq_assessor_model", "openai/gpt-oss-120b")
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: FakeResponse())
+
+    assert doctor.check_groq_models() == []
+
+
+def test_a_rejected_key_is_named_as_such(monkeypatch):
+    import httpx
+
+    import scripts.doctor as doctor
+    from bot.config import settings
+
+    class Unauthorized:
+        status_code = 401
+
+    monkeypatch.setattr(settings, "llm_provider", "groq")
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: Unauthorized())
+    assert any("rejected" in i for i in doctor.check_groq_models())

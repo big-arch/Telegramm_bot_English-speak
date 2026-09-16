@@ -35,10 +35,15 @@ class Settings(BaseSettings):
     # groq is the default because one key covers both speech recognition and
     # dialogue. Gemini is a one-variable swap for better dialogue quality.
     llm_provider: str = "groq"  # groq (free) | gemini (free) | anthropic
-    groq_chat_model: str = "llama-3.3-70b-versatile"
-    # Swap the assessor to llama-3.1-8b-instant to raise the daily ceiling a
-    # long way — the free tier allows far more requests to the smaller model.
-    groq_assessor_model: str = "llama-3.3-70b-versatile"
+    # Groq retires models on a few months' notice — llama-3.3-70b-versatile and
+    # llama-3.1-8b-instant were both decommissioned in August 2026. Whatever is
+    # written here will go stale too, which is why scripts/doctor.py checks the
+    # configured names against the live list at startup and prints what is
+    # actually available.
+    groq_chat_model: str = "openai/gpt-oss-120b"
+    # Drop the assessor to openai/gpt-oss-20b to raise the daily ceiling — the
+    # free tier allows far more requests to the smaller model.
+    groq_assessor_model: str = "openai/gpt-oss-120b"
     gemini_api_key: SecretStr | None = None
     gemini_chat_model: str = "gemini-2.5-flash"
     gemini_assessor_model: str = "gemini-2.5-flash"

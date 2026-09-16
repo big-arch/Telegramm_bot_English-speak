@@ -11,10 +11,10 @@ echo "=============================================="
 echo " SpeakOut starting"
 echo "=============================================="
 
-echo "--> 1/4  checking the database connection"
+echo "--> 1/4  checking models and the database"
 if ! python -m scripts.doctor; then
     echo ""
-    echo "!! Fix DB_DSN in the hosting dashboard and redeploy."
+    echo "!! Fix the settings named above in the hosting dashboard and redeploy."
     exit 1
 fi
 

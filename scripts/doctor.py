@@ -1,14 +1,18 @@
-"""Check the database configuration and say plainly what is wrong.
+"""Check the configuration at startup and say plainly what is wrong.
 
-"Failed deploy" plus a SQLAlchemy traceback tells a person nothing they can
-act on. This runs before migrations and turns the four mistakes that actually
-happen into one readable line each — with the connection string echoed back
-with its password masked, so a placeholder left unreplaced is visible at a
+"Failed deploy" plus a traceback tells a person nothing they can act on, and a
+model name that quietly went out of service tells them even less — it surfaces
+as "something broke on my side" on the first voice message a learner sends.
+
+This runs before anything else and covers both: it verifies the Groq model
+names still exist (listing what does, when they do not), then checks the
+database connection string for the mistakes that actually happen, echoing it
+back with the password masked so a placeholder left unreplaced is visible at a
 glance.
 
     python -m scripts.doctor
 
-Exits non-zero when the database cannot be used.
+Exits non-zero when the bot would not work.
 """
 
 from __future__ import annotations
@@ -124,7 +128,78 @@ async def try_connect() -> str | None:
         await engine.dispose()
 
 
+GROQ_MODELS_URL = "https://api.groq.com/openai/v1/models"
+
+
+def check_groq_models() -> list[str]:
+    """Verify the configured Groq model names still exist.
+
+    Providers retire models on a few months' notice, and a decommissioned name
+    fails at the first real request — which here means the first voice message
+    a learner sends, reported to them as "something broke on my side". Checking
+    at startup turns that into a deploy-time message naming the replacement.
+    """
+    import httpx
+
+    if settings.groq_api_key is None:
+        return ["GROQ_API_KEY is not set."]
+
+    wanted: dict[str, str] = {}
+    if settings.llm_provider == "groq":
+        wanted[settings.groq_chat_model] = "GROQ_CHAT_MODEL"
+        wanted[settings.groq_assessor_model] = "GROQ_ASSESSOR_MODEL"
+    if settings.stt_provider == "groq":
+        from bot.services.stt import MODELS
+
+        wanted[MODELS["groq"]] = "speech recognition"
+
+    if not wanted:
+        return []
+
+    try:
+        response = httpx.get(
+            GROQ_MODELS_URL,
+            headers={"Authorization": f"Bearer {settings.groq_api_key.get_secret_value()}"},
+            timeout=20.0,
+        )
+    except httpx.HTTPError as exc:
+        return [f"Could not reach Groq to verify models: {exc}"]
+
+    if response.status_code == 401:
+        return ["GROQ_API_KEY was rejected. Create a new key at console.groq.com/keys."]
+    if response.status_code != 200:
+        return [f"Groq answered {response.status_code} when listing models."]
+
+    available = sorted(m["id"] for m in response.json().get("data", []))
+    missing = [(name, where) for name, where in wanted.items() if name not in available]
+    if not missing:
+        return []
+
+    report = [
+        f"{where}: '{name}' no longer exists on Groq." for name, where in missing
+    ]
+    chat = [m for m in available if "whisper" not in m]
+    report.append("Available models right now: " + ", ".join(chat[:20]))
+    report.append(
+        "Set GROQ_CHAT_MODEL and GROQ_ASSESSOR_MODEL to one of those and redeploy."
+    )
+    return report
+
+
 def main() -> int:
+    problems_found = False
+
+    if settings.llm_provider == "groq" or settings.stt_provider == "groq":
+        issues = check_groq_models()
+        if issues:
+            problems_found = True
+            print("!! Groq models:")
+            for item in issues:
+                print(f"   - {item}")
+            print()
+        else:
+            print("    groq models OK")
+
     dsn = settings.db_dsn
     print(f"    database: {mask(dsn)}")
 
@@ -142,14 +217,14 @@ def main() -> int:
         return 1
 
     error = asyncio.run(try_connect())
-    if error is None:
-        print("    connection OK")
-        return 0
+    if error is not None:
+        print()
+        print(f"!! Could not connect to the database: {error}")
+        explain_connection_error(error)
+        return 1
 
-    print()
-    print(f"!! Could not connect to the database: {error}")
-    explain_connection_error(error)
-    return 1
+    print("    connection OK")
+    return 1 if problems_found else 0
 
 
 def explain_connection_error(error: str) -> None:

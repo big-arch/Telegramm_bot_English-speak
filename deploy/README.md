@@ -3,22 +3,23 @@
 Бот — это программа, которая должна где-то работать. Пока она не запущена, @SpeakOutEducation_bot молчит.
 
 > **Не хочешь возиться с терминалом и держать компьютер включённым?**
-> → **[KOYEB.md](KOYEB.md)** — всё делается мышкой в браузере. Это рекомендуемый путь.
+> → **[RENDER.md](RENDER.md)** — всё делается мышкой в браузере. Это рекомендуемый путь.
 
 Ниже — варианты для тех, кому нужен терминал и полный контроль. Все бесплатны.
 
 ---
 
-## Сначала: два ключа
-
-Оба выдаются мгновенно, карта не нужна.
+## Сначала: один ключ
 
 | Ключ | Где взять | Бесплатный лимит |
 |---|---|---|
-| `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) | ~1500 запросов/день. Одна реплика = 2 запроса, то есть ~700 реплик в день |
-| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) | ~2000 расшифровок и 8 часов аудио в день |
+| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) | ~8 часов аудио и тысячи запросов к модели в день |
+
+Один ключ Groq закрывает и распознавание речи, и сам разговор. Выдаётся мгновенно, карта не нужна.
 
 Голос (`edge-tts`) не требует ключа вообще. База — локальный файл SQLite.
+
+Необязательно: ключ [Gemini](https://aistudio.google.com/apikey) делает диалог живее — добавь `GEMINI_API_KEY` и поставь `LLM_PROVIDER=gemini`.
 
 Токен бота — у @BotFather → `/mybots` → SpeakOutEducation_bot → API Token.
 
@@ -37,7 +38,7 @@ cd Telegramm_bot_English-speak
 # Windows: winget install Gyan.FFmpeg
 
 make install
-cp .env.example .env    # вписать BOT_TOKEN, GEMINI_API_KEY, GROQ_API_KEY
+cp .env.example .env    # вписать BOT_TOKEN и GROQ_API_KEY
 make setup
 make run
 ```
@@ -68,7 +69,7 @@ cd Telegramm_bot_English-speak
 
 make install
 cp .env.example .env
-nano .env          # вписать три значения, Ctrl+O, Enter, Ctrl+X
+nano .env          # вписать два значения, Ctrl+O, Enter, Ctrl+X
 make setup
 ```
 
@@ -90,7 +91,7 @@ journalctl -u speakout -f       # живой лог
 В логе при старте должно быть:
 
 ```
-providers: llm=gemini stt=groq tts=edge db=sqlite
+providers: llm=groq stt=groq tts=edge db=sqlite mode=polling
 billing: everything on free tiers — this run costs nothing
 ```
 
@@ -116,7 +117,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-База лежит в `./data` и переживает пересборку образа. Подходит для любого хостинга с Docker: Koyeb, Fly.io, своя VPS.
+База лежит в `./data` и переживает пересборку образа. Подходит для любого хостинга с Docker: Render, своя VPS, Oracle Cloud.
 
 ---
 
@@ -129,19 +130,20 @@ docker compose logs -f
 | «Не разобрал запись» на каждое голосовое | Кончился дневной лимит Groq или неверный `GROQ_API_KEY` |
 | «Что-то сломалось на моей стороне» | Смотри `journalctl -u speakout -n 100` — там будет настоящая ошибка |
 | Две реплики на одно сообщение | Запущено два процесса с одним токеном. Останови лишний |
-| `resource exhausted` в логе | Кончилась дневная квота Gemini. Сбрасывается в полночь по тихоокеанскому времени |
+| `rate limit` / `429` в логе | Кончилась дневная квота Groq. Сбросится через сутки. Снизить нагрузку: `GROQ_ASSESSOR_MODEL=llama-3.1-8b-instant` |
 
 ---
 
 ## Когда бесплатного перестанет хватать
 
-Лимиты Gemini и Groq считаются на аккаунт, а не на пользователя бота. Прикидка: ~700 реплик в день на всех — это примерно 50–70 разговоров, то есть комфортно до нескольких десятков активных людей.
+Лимиты Groq считаются на аккаунт, а не на пользователя бота — комфортно до нескольких десятков активных людей.
 
 Что делать дальше, по возрастанию цены:
 
-1. `FREE_DAILY_TURNS=20` — жёсткий потолок на человека, растягивает квоту.
-2. `TTS_PROVIDER=openai` — если голоса Edge перестанут устраивать, ~$15 за миллион знаков.
-3. `LLM_PROVIDER=anthropic` — заметно лучше и разговор, и разбор ошибок.
-4. `DB_DSN` на Supabase — когда одного процесса станет мало.
+1. `GROQ_ASSESSOR_MODEL=llama-3.1-8b-instant` — бесплатно, у младшей модели потолок заметно выше.
+2. `FREE_DAILY_TURNS=20` — жёсткий потолок на человека, растягивает квоту.
+3. `LLM_PROVIDER=gemini` — бесплатно и живее, но нужен второй ключ.
+4. `TTS_PROVIDER=openai` — если голоса Edge перестанут устраивать, ~$15 за миллион знаков.
+5. `LLM_PROVIDER=anthropic` — заметно лучше и разговор, и разбор ошибок. Платно.
 
 Реальный расход по каждому пользователю пишется в таблицу `usage_days` с первого дня, так что момент «пора платить» ты увидишь по данным, а не по счёту.

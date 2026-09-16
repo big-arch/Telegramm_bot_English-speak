@@ -13,6 +13,8 @@ from __future__ import annotations
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_DB_DSN = "sqlite+aiosqlite:///data/speakout.db"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -27,7 +29,7 @@ class Settings(BaseSettings):
     # --- Storage ---
     # SQLite needs nothing installed and no account. Point this at Postgres or
     # Supabase when you outgrow one process.
-    db_dsn: str = "sqlite+aiosqlite:///data/speakout.db"
+    db_dsn: str = DEFAULT_DB_DSN
 
     # --- Dialogue and assessment ---
     # groq is the default because one key covers both speech recognition and
@@ -79,6 +81,19 @@ class Settings(BaseSettings):
     # spending the whole day's quota before lunch.
     free_daily_turns: int = 40
     max_voice_seconds: int = 120
+
+    @field_validator("db_dsn", mode="before")
+    @classmethod
+    def _blank_dsn_falls_back(cls, v: object) -> object:
+        """A variable left blank in a hosting dashboard arrives as "".
+
+        Without this, an empty DB_DSN reaches SQLAlchemy as an unparseable URL
+        and the container dies on the first line with a stack trace that says
+        nothing about the real problem.
+        """
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return DEFAULT_DB_DSN
+        return str(v).strip()
 
     @field_validator("admin_ids", mode="before")
     @classmethod

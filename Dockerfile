@@ -22,4 +22,4 @@ USER bot
 # Only used in webhook mode. Hosts usually override this via the PORT env var.
 EXPOSE 8000
 
-CMD ["sh", "-c", "alembic upgrade head && python -m scripts.seed && python -m bot"]
+CMD ["sh", "./docker-entrypoint.sh"]

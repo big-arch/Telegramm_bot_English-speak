@@ -93,3 +93,19 @@ async def test_webhook_rejects_a_request_without_the_secret(monkeypatch, aiohttp
     assert response.status != 200
 
     await bot.session.close()
+
+
+def test_blank_db_dsn_falls_back_instead_of_crashing(monkeypatch):
+    """A variable left empty in a hosting dashboard arrives as "".
+
+    Without the fallback it reaches SQLAlchemy as an unparseable URL and the
+    container dies on its first line with a trace that says nothing useful.
+    """
+    from bot.config import DEFAULT_DB_DSN, Settings
+
+    for blank in ("", "   "):
+        s = Settings(bot_token="x", groq_api_key="k", db_dsn=blank)
+        assert s.db_dsn == DEFAULT_DB_DSN
+
+    s = Settings(bot_token="x", groq_api_key="k", db_dsn="  postgresql+asyncpg://a/b  ")
+    assert s.db_dsn == "postgresql+asyncpg://a/b"

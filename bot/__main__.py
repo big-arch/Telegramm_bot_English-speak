@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import secrets
 from contextlib import suppress
 
@@ -206,6 +207,42 @@ def run_webhook(bot: Bot, dp: Dispatcher) -> None:
     web.run_app(app, host="0.0.0.0", port=settings.port, print=None)
 
 
+def run_polling_with_health(bot: Bot, dp: Dispatcher) -> None:
+    """Poll for updates, but still open a port.
+
+    Container platforms treat a web service that never binds its port as a
+    failed deploy, whatever the process is actually doing. Serving health
+    checks alongside polling turns that hard failure into a running service
+    with a warning in the log, which is diagnosable.
+    """
+
+    async def health(_: web.Request) -> web.Response:
+        return web.json_response({"ok": True, "mode": "polling"})
+
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/healthz", health)
+
+    async def on_startup(application: web.Application) -> None:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.set_my_commands(COMMANDS)
+        application["polling"] = asyncio.create_task(
+            dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        )
+
+    async def on_cleanup(application: web.Application) -> None:
+        task = application.get("polling")
+        if task is not None:
+            task.cancel()
+        await bot.session.close()
+        await engine.dispose()
+
+    app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
+    logger.info("listening on 0.0.0.0:%s (polling)", settings.port)
+    web.run_app(app, host="0.0.0.0", port=settings.port, print=None)
+
+
 async def _polling_main(bot: Bot, dp: Dispatcher) -> None:
     await bot.set_my_commands(COMMANDS)
     try:
@@ -229,8 +266,15 @@ def main() -> None:
     dp = build_dispatcher()
 
     if settings.use_webhook:
-        # web.run_app owns the event loop, so this branch is not awaited.
+        # web.run_app owns the event loop, so these branches are not awaited.
         run_webhook(bot, dp)
+    elif os.getenv("PORT"):
+        logger.warning(
+            "PORT is set but no public URL was found, so updates will be POLLED. "
+            "On hosting that sleeps an idle service this stops working as soon as "
+            "the service sleeps — set WEBHOOK_BASE_URL to your public https address."
+        )
+        run_polling_with_health(bot, dp)
     else:
         asyncio.run(_polling_main(bot, dp))
 

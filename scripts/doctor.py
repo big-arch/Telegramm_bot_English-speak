@@ -168,12 +168,18 @@ def explain_connection_error(error: str) -> None:
         print("   URI exactly as shown; then change only 'postgresql://' to")
         print("   'postgresql+asyncpg://' and fill in the password.")
     elif "password authentication" in lowered:
-        print("   A Supabase host answered and refused these credentials. Either:")
-        print("     - the password is wrong, or")
-        print("     - the username/host belong to a DIFFERENT project than yours.")
-        print("   Check the username after 'postgres.' matches your project's")
-        print("   reference and the host names your project's region, then compare")
-        print("   against Project Settings -> Database -> Connection string.")
+        # Reaching this means the pooler resolved the tenant — otherwise it
+        # would have said "tenant not found" instead. So the host and the
+        # project reference are right, and only the password is wrong. Do not
+        # send anyone back to re-check the address.
+        print("   The pooler found your project, so the host and the project")
+        print("   reference are correct. Only the password is wrong.")
+        print()
+        print("   Do not try to remember it — reset it:")
+        print("     Supabase -> Project Settings -> Database -> Database password")
+        print("     -> Reset database password")
+        print("   Use letters and digits only (other characters break the URL),")
+        print("   then put the new password into DB_DSN here and redeploy.")
     elif "could not translate host name" in lowered or "nodename" in lowered:
         print("   The hostname does not resolve - the string was truncated or mistyped.")
     elif "timeout" in lowered or "timed out" in lowered:

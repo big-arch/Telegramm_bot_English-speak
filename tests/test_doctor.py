@@ -105,3 +105,17 @@ def test_tenant_not_found_is_a_host_problem(capsys):
     assert "HOST is wrong" in out
     assert "Connect" in out
     assert "password" not in out.split("HOST is wrong")[0]
+
+
+def test_password_failure_does_not_send_you_back_to_the_host(capsys):
+    """Reaching a password error means the pooler resolved the tenant, so the
+    host is provably right. Hedging about the address here wastes a deploy
+    cycle on re-checking the one part that is known good."""
+    import scripts.doctor as doctor
+
+    doctor.explain_connection_error(
+        'InvalidPasswordError: password authentication failed for user "postgres"'
+    )
+    out = capsys.readouterr().out
+    assert "host and the project" in out and "correct" in out
+    assert "Reset database password" in out

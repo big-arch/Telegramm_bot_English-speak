@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
@@ -24,7 +25,7 @@ from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
 from bot.keyboards.common import topics_kb
 from bot.services import conversation as convo_service
-from bot.services import feedback, fluency, llm, stt, vision
+from bot.services import feedback, fluency, images, llm, stt, vision
 from bot.services.speak import send_spoken
 from bot.texts import (
     CHOOSE_TOPIC,
@@ -142,7 +143,24 @@ async def _reply(
     convo: Session,
     user: User,
     text: str,
+    photo_query: str | None = None,
 ) -> None:
+    """Send the tutor's turn: the picture first, then the voice.
+
+    Order matters. The photo arrives while the speech is still being
+    synthesised, so the learner is already looking at it when the voice starts
+    — which is how a person shows you something.
+    """
+    if photo_query:
+        url = await images.find(photo_query)
+        if url:
+            try:
+                await bot.send_photo(chat_id, url)
+            except TelegramAPIError:
+                # Telegram fetches the URL itself and sometimes refuses one.
+                # A missing picture costs the learner nothing but the picture.
+                logger.info("could not send photo for %r", photo_query)
+
     persona = personas_mod.get(convo.persona_key)
     await send_spoken(
         bot,
@@ -217,7 +235,10 @@ async def on_voice(message: Message, session: DbSession, user: User, bot: Bot) -
         return
 
     await status.edit_text(f"🗣 <i>{transcript.text}</i>")
-    await _reply(bot, session, chat_id=message.chat.id, convo=convo, user=user, text=result.reply)
+    await _reply(
+        bot, session, chat_id=message.chat.id, convo=convo, user=user,
+        text=result.reply, photo_query=result.photo_query,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -287,7 +308,10 @@ async def on_photo(message: Message, session: DbSession, user: User, bot: Bot) -
         return
 
     await status.delete()
-    await _reply(bot, session, chat_id=message.chat.id, convo=convo, user=user, text=result.reply)
+    await _reply(
+        bot, session, chat_id=message.chat.id, convo=convo, user=user,
+        text=result.reply, photo_query=result.photo_query,
+    )
 
 
 @router.message(F.audio | F.video_note | F.document)
@@ -327,7 +351,10 @@ async def on_text(message: Message, session: DbSession, user: User, bot: Bot) ->
         return
 
     await status.delete()
-    await _reply(bot, session, chat_id=message.chat.id, convo=convo, user=user, text=result.reply)
+    await _reply(
+        bot, session, chat_id=message.chat.id, convo=convo, user=user,
+        text=result.reply, photo_query=result.photo_query,
+    )
 
 
 # --------------------------------------------------------------------------- #

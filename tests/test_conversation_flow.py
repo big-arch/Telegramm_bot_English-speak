@@ -306,3 +306,66 @@ async def test_a_photo_turn_does_not_count_as_a_voice_turn(db, fixtures, monkeyp
     assert usage.voice_turns == 0
     assert convo.voice_turn_count == 0
     assert convo.turn_count == 1
+
+
+def test_show_marker_is_removed_before_anything_speaks_it():
+    """A synthesiser reading "bracket show colon brooklyn bridge" out loud is
+    worse than no picture at all."""
+    from bot.services.images import extract_request
+
+    text, query = extract_request(
+        "That bridge is beautiful at sunset. [SHOW: brooklyn bridge] Have you been?"
+    )
+    assert query == "brooklyn bridge"
+    assert "SHOW" not in text and "[" not in text
+    assert text == "That bridge is beautiful at sunset. Have you been?"
+
+
+def test_a_reply_without_a_marker_is_untouched():
+    from bot.services.images import extract_request
+
+    original = "What did you do at the weekend?"
+    text, query = extract_request(original)
+    assert text == original and query is None
+
+
+def test_marker_matching_is_forgiving_about_spacing_and_case():
+    from bot.services.images import extract_request
+
+    for raw in ("[SHOW: tokyo]", "[show:tokyo]", "[ Show : tokyo ]"):
+        _text, query = extract_request(f"Look. {raw}")
+        assert query == "tokyo", raw
+
+
+def test_diagrams_and_logos_are_not_offered_as_photographs():
+    """Commons is full of maps and coats of arms. Describing a diagram is a
+    different exercise from describing a scene."""
+    from bot.services.images import _is_photo
+
+    assert _is_photo("File:Brooklyn Bridge at dusk.jpg")
+    assert not _is_photo("File:Map of New York City.png")
+    assert not _is_photo("File:Coat of arms of Paris.svg")
+    assert not _is_photo("File:Nike logo.png")
+
+
+@pytest.mark.asyncio
+async def test_a_reply_asking_for_a_photo_stores_the_clean_text(db, fixtures, monkeypatch):
+    """What goes in the history is what was said, not the instruction."""
+    user, topic, convo = fixtures
+
+    class ShowingStub(StubBackend):
+        async def complete(self, *, system, messages, max_tokens):
+            self.reply_calls += 1
+            self.last_system = system
+            return "Here it is. [SHOW: brooklyn bridge] What do you notice?", Usage(10, 5)
+
+    monkeypatch.setattr(llm, "get_backend", lambda: ShowingStub())
+
+    result = await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic, text="show me new york", modality="text",
+    )
+
+    assert result.photo_query == "brooklyn bridge"
+    assert "SHOW" not in result.reply
+    turn = await db.scalar(select(Turn).where(Turn.user_id == user.id))
+    assert "SHOW" not in turn.assistant_text

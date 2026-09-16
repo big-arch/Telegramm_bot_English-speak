@@ -188,8 +188,60 @@ def check_groq_models() -> list[str]:
     return report
 
 
+def check_gemini_models() -> list[str]:
+    """Same problem as Groq, different vendor.
+
+    Google retires models for new projects too — gemini-2.5-flash began
+    answering 404 "no longer available to new users" in September 2026, which
+    surfaced as a photo the bot could not see rather than as anything naming a
+    model.
+    """
+    from google import genai
+    from google.genai import errors as genai_errors
+
+    if settings.gemini_api_key is None:
+        return ["GEMINI_API_KEY is not set."]
+
+    wanted: dict[str, str] = {}
+    if settings.llm_provider == "gemini":
+        wanted[settings.gemini_chat_model] = "GEMINI_CHAT_MODEL"
+        wanted[settings.gemini_assessor_model] = "GEMINI_ASSESSOR_MODEL"
+    if settings.resolved_vision_provider == "gemini":
+        wanted[settings.gemini_chat_model] = "GEMINI_CHAT_MODEL (photos)"
+    if not wanted:
+        return []
+
+    try:
+        client = genai.Client(api_key=settings.gemini_api_key.get_secret_value())
+        available = {m.name.removeprefix("models/") for m in client.models.list()}
+    except genai_errors.APIError as exc:
+        return [f"Could not list Gemini models: {exc}"]
+    except Exception as exc:  # noqa: BLE001
+        return [f"Could not reach Gemini: {exc}"]
+
+    missing = [(n, w) for n, w in wanted.items() if n not in available]
+    if not missing:
+        return []
+
+    report = [f"{w}: '{n}' is not available to this key." for n, w in missing]
+    flash = sorted(m for m in available if "flash" in m and "image" not in m)
+    report.append("Available now: " + ", ".join(flash[:12] or sorted(available)[:12]))
+    return report
+
+
 def main() -> int:
     problems_found = False
+
+    if settings.llm_provider == "gemini" or settings.resolved_vision_provider == "gemini":
+        issues = check_gemini_models()
+        if issues:
+            problems_found = True
+            print("!! Gemini models:")
+            for item in issues:
+                print(f"   - {item}")
+            print()
+        else:
+            print("    gemini models OK")
 
     if settings.llm_provider == "groq" or settings.stt_provider == "groq":
         issues = check_groq_models()

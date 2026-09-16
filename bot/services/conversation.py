@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from bot import personas as personas_mod
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import CardRepo, ErrorRepo, SessionRepo, TurnRepo, UsageRepo
-from bot.services import llm, vision
+from bot.services import images, llm, vision
 from bot.services.backends import Usage
 from bot.services.fluency import FluencyMetrics
 
@@ -32,6 +32,9 @@ class TurnResult:
     reply: str
     turn: Turn
     assessment: llm.Assessment | None
+    # What the tutor wants to show, if anything. Resolved to a picture by the
+    # handler, which owns sending.
+    photo_query: str | None = None
 
 
 def _build_history(convo: Session, past: list[Turn], current_text: str) -> list[dict]:
@@ -111,6 +114,11 @@ async def process_turn(
             reply_task, assess_task
         )
 
+    # Strip the show-marker before anything stores or speaks the reply: a
+    # synthesiser reading "bracket show colon brooklyn bridge" out loud is
+    # worse than no picture at all.
+    reply, photo_query = images.extract_request(reply)
+
     turn = Turn(
         session_id=convo.id,
         user_id=user.id,
@@ -175,7 +183,9 @@ async def process_turn(
     # counters land together or not at all.
     await db.commit()
 
-    return TurnResult(reply=reply, turn=turn, assessment=assessment)
+    return TurnResult(
+        reply=reply, turn=turn, assessment=assessment, photo_query=photo_query
+    )
 
 
 _LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]

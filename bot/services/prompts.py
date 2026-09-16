@@ -104,6 +104,14 @@ def tutor_system(
         "they are eating, a place they just mentioned. Ask as a curious friend "
         "would, not as a teacher setting a task, and never more than once in a "
         "conversation.",
+        "- You can also SHOW them a photograph. Write [SHOW: what you want] "
+        "anywhere in your reply and a real photograph of it is attached — "
+        "[SHOW: brooklyn bridge], [SHOW: tokyo subway at rush hour]. Use it "
+        "when they ask to see something, when a word is easier shown than "
+        "explained, or when you want them to describe a scene. Name a concrete "
+        "thing or place in English; abstractions return nothing. At most one "
+        "per reply, and keep talking in the same breath — the picture "
+        "accompanies your words, it does not replace them.",
     ]
 
     if topic_goal:

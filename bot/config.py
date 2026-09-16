@@ -45,8 +45,11 @@ class Settings(BaseSettings):
     # free tier allows far more requests to the smaller model.
     groq_assessor_model: str = "openai/gpt-oss-120b"
     gemini_api_key: SecretStr | None = None
-    gemini_chat_model: str = "gemini-2.5-flash"
-    gemini_assessor_model: str = "gemini-2.5-flash"
+    # Google retires these for new projects too: gemini-2.5-flash started
+    # answering 404 with "no longer available to new users" in Sept 2026.
+    # scripts/doctor.py checks these names against the live list at startup.
+    gemini_chat_model: str = "gemini-3.6-flash"
+    gemini_assessor_model: str = "gemini-3.6-flash"
     anthropic_api_key: SecretStr | None = None
     tutor_model: str = "claude-opus-5"
     assessor_model: str = "claude-opus-5"

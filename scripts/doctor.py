@@ -21,6 +21,21 @@ from bot.config import settings
 
 PLACEHOLDERS = ("[YOUR-PASSWORD]", "YOUR-PASSWORD", "<password>", "your-password")
 
+# Fragments that only appear in a documentation example. Copying the whole
+# example line and changing just the password produces a string that is
+# perfectly well-formed and points at somebody else's project — the database
+# then rejects the password, and the error blames the password rather than the
+# address. Naming it here is the only way that mistake becomes obvious.
+EXAMPLE_MARKERS = (
+    "abcdefgh",
+    "project-ref",
+    "<ref>",
+    "region",
+    "твойпароль",
+    "example.com",
+    "<pw>",
+)
+
 
 def mask(dsn: str) -> str:
     """Hide the password, keep everything else readable."""
@@ -43,6 +58,17 @@ def problems(dsn: str) -> list[str]:
             "The scheme is missing its driver. Change the beginning of the string "
             "from 'postgresql://' to 'postgresql+asyncpg://' — the bot talks to "
             "Postgres asynchronously and cannot use the default driver."
+        )
+
+    leaked = [m for m in EXAMPLE_MARKERS if m in lowered]
+    if leaked:
+        found.append(
+            f"This looks like the documentation example, not your own string "
+            f"(it still contains {', '.join(repr(m) for m in leaked)}). Open your "
+            "Supabase project -> Project Settings -> Database -> Connection string, "
+            "switch the selector to 'Session pooler', and copy THAT line. The "
+            "username must contain your project's reference and the host must name "
+            "your project's region."
         )
 
     if ":6543/" in dsn:
@@ -124,8 +150,12 @@ def main() -> int:
     print(f"!! Could not connect to the database: {error}")
     lowered = error.lower()
     if "password authentication" in lowered:
-        print("   The host answered, so the address is right and the password is wrong.")
-        print("   Reset it in Supabase (Project Settings -> Database) and update DB_DSN.")
+        print("   A Supabase host answered and refused these credentials. Either:")
+        print("     - the password is wrong, or")
+        print("     - the username/host belong to a DIFFERENT project than yours.")
+        print("   Check the username after 'postgres.' matches your project's")
+        print("   reference and the host names your project's region, then compare")
+        print("   against Project Settings -> Database -> Connection string.")
     elif "could not translate host name" in lowered or "nodename" in lowered:
         print("   The hostname does not resolve — the string was truncated or mistyped.")
     elif "timeout" in lowered or "timed out" in lowered:

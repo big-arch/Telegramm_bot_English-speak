@@ -69,3 +69,23 @@ def test_several_mistakes_are_all_reported():
 
 def test_sqlite_is_not_flagged():
     assert problems("sqlite+aiosqlite:///data/speakout.db") == []
+
+
+def test_the_documentation_example_is_recognised_as_such():
+    """Copying the example line and changing only the password yields a
+    well-formed string pointing at a project that is not yours. The database
+    then blames the password, which sends you looking in the wrong place."""
+    example = (
+        "postgresql+asyncpg://postgres.abcdefgh:RealPassword123"
+        "@aws-0-eu-central-1.pooler.supabase.com:5432/postgres"
+    )
+    found = problems(example)
+    assert any("documentation example" in p for p in found)
+
+
+def test_a_real_looking_project_ref_is_not_flagged():
+    real = (
+        "postgresql+asyncpg://postgres.rcxqirojmocfcauluevs:aB3xY9zQ"
+        "@aws-0-eu-west-1.pooler.supabase.com:5432/postgres"
+    )
+    assert problems(real) == []

@@ -49,6 +49,7 @@ async def send_spoken(
 
     audio = await tts.synthesize(
         text,
+        edge_voice=persona.edge_voice,
         elevenlabs_voice_id=persona.elevenlabs_voice_id,
         openai_voice=persona.openai_voice,
         speed=speed,

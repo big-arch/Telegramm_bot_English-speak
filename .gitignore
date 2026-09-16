@@ -13,8 +13,11 @@ venv/
 .mypy_cache/
 
 *.db
+*.db-wal
+*.db-shm
 *.sqlite3
 *.log
+data/
 
 .DS_Store
 .idea/

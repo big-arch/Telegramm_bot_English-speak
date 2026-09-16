@@ -1,0 +1,17 @@
+services:
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Keeps the SQLite database across rebuilds. Without this, every
+      # redeploy wipes everyone's progress.
+      - ./data:/app/data
+    # Give in-flight handlers time to finish instead of dropping a learner
+    # mid-reply on every deploy.
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

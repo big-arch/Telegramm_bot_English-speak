@@ -1,4 +1,11 @@
-"""Typed configuration. Everything secret comes from the environment."""
+"""Typed configuration. Everything secret comes from the environment.
+
+Defaults are the **free stack**: Gemini for dialogue, Groq Whisper for speech
+recognition, Microsoft Edge neural voices for speech, SQLite for storage. That
+combination costs nothing and needs two API keys, both issued instantly without
+a card. Every one of them can be swapped for a paid provider by changing one
+variable.
+"""
 
 from __future__ import annotations
 
@@ -13,31 +20,43 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Telegram
+    # --- Telegram ---
     bot_token: SecretStr
 
-    # Database
-    db_dsn: str
+    # --- Storage ---
+    # SQLite needs nothing installed and no account. Point this at Postgres or
+    # Supabase when you outgrow one process.
+    db_dsn: str = "sqlite+aiosqlite:///data/speakout.db"
 
-    # LLM
-    anthropic_api_key: SecretStr
+    # --- Dialogue and assessment ---
+    llm_provider: str = "gemini"  # gemini (free) | anthropic
+    gemini_api_key: SecretStr | None = None
+    gemini_chat_model: str = "gemini-2.5-flash"
+    gemini_assessor_model: str = "gemini-2.5-flash"
+    anthropic_api_key: SecretStr | None = None
     tutor_model: str = "claude-opus-5"
     assessor_model: str = "claude-opus-5"
 
-    # Speech
-    openai_api_key: SecretStr
-    tts_provider: str = "elevenlabs"
+    # --- Speech recognition ---
+    stt_provider: str = "groq"  # groq (free) | openai
+    groq_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
+
+    # --- Speech synthesis ---
+    tts_provider: str = "edge"  # edge (free) | openai | elevenlabs
     elevenlabs_api_key: SecretStr | None = None
 
-    # Optional infra
+    # --- Optional infra ---
     redis_url: str | None = None
 
-    # Ops
+    # --- Ops ---
     admin_ids: list[int] = Field(default_factory=list)
     log_level: str = "INFO"
 
-    # Economics
-    free_daily_turns: int = 0
+    # --- Guardrails ---
+    # Free tiers have daily ceilings. This keeps one enthusiastic user from
+    # spending the whole day's quota before lunch.
+    free_daily_turns: int = 40
     max_voice_seconds: int = 120
 
     @field_validator("admin_ids", mode="before")
@@ -48,15 +67,44 @@ class Settings(BaseSettings):
             return [int(x) for x in v.replace(" ", "").split(",") if x]
         return v
 
-    @field_validator("redis_url", "elevenlabs_api_key", mode="before")
+    @field_validator(
+        "redis_url",
+        "elevenlabs_api_key",
+        "openai_api_key",
+        "anthropic_api_key",
+        "gemini_api_key",
+        "groq_api_key",
+        mode="before",
+    )
     @classmethod
     def _empty_to_none(cls, v: object) -> object:
         # An unset key in .env arrives as "" rather than absent.
         return None if v == "" else v
 
     @property
-    def uses_elevenlabs(self) -> bool:
-        return self.tts_provider == "elevenlabs" and self.elevenlabs_api_key is not None
+    def is_sqlite(self) -> bool:
+        return self.db_dsn.startswith("sqlite")
+
+    def missing_keys(self) -> list[str]:
+        """Which keys the chosen providers need but do not have.
+
+        Checked once at startup so a misconfiguration fails immediately with a
+        readable message, rather than inside a handler an hour later.
+        """
+        missing = []
+        if self.llm_provider == "gemini" and self.gemini_api_key is None:
+            missing.append("GEMINI_API_KEY (LLM_PROVIDER=gemini)")
+        if self.llm_provider == "anthropic" and self.anthropic_api_key is None:
+            missing.append("ANTHROPIC_API_KEY (LLM_PROVIDER=anthropic)")
+        if self.stt_provider == "groq" and self.groq_api_key is None:
+            missing.append("GROQ_API_KEY (STT_PROVIDER=groq)")
+        if self.stt_provider == "openai" and self.openai_api_key is None:
+            missing.append("OPENAI_API_KEY (STT_PROVIDER=openai)")
+        if self.tts_provider == "elevenlabs" and self.elevenlabs_api_key is None:
+            missing.append("ELEVENLABS_API_KEY (TTS_PROVIDER=elevenlabs)")
+        if self.tts_provider == "openai" and self.openai_api_key is None:
+            missing.append("OPENAI_API_KEY (TTS_PROVIDER=openai)")
+        return missing
 
 
 settings = Settings()  # type: ignore[call-arg]

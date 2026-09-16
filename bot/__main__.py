@@ -50,11 +50,44 @@ def build_storage():
     return MemoryStorage()
 
 
+def preflight() -> None:
+    """Fail loudly at startup rather than inside a handler an hour later."""
+    missing = settings.missing_keys()
+    if missing:
+        raise SystemExit(
+            "Missing configuration:\n  - "
+            + "\n  - ".join(missing)
+            + "\n\nCopy .env.example to .env and fill those in."
+        )
+
+    logger.info(
+        "providers: llm=%s stt=%s tts=%s db=%s",
+        settings.llm_provider,
+        settings.stt_provider,
+        settings.tts_provider,
+        "sqlite" if settings.is_sqlite else "postgres",
+    )
+    paid = []
+    if settings.llm_provider == "anthropic":
+        paid.append("LLM")
+    if settings.stt_provider == "openai":
+        paid.append("STT")
+    if settings.tts_provider in {"openai", "elevenlabs"}:
+        paid.append("TTS")
+    logger.info(
+        "billing: %s",
+        "everything on free tiers — this run costs nothing"
+        if not paid
+        else f"paid providers in use for {', '.join(paid)}",
+    )
+
+
 async def main() -> None:
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
+    preflight()
 
     bot = Bot(
         token=settings.bot_token.get_secret_value(),

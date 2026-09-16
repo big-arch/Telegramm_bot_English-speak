@@ -8,12 +8,14 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, update
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
+
+from bot.db.upsert import insert
 
 from bot.db.models import (
     AudioCache,
@@ -257,7 +259,9 @@ class CardRepo:
             insert(Word)
             .values(lemma=lemma, pos="unknown", cefr=cefr)
             .on_conflict_do_update(
-                constraint="uq_word_lemma_pos",
+                # index_elements rather than a named constraint: SQLite's upsert
+                # does not accept `constraint=`, and this form works on both.
+                index_elements=[Word.lemma, Word.pos],
                 set_={"lemma": lemma},  # no-op update so RETURNING gives us the row
             )
             .returning(Word)
@@ -282,7 +286,9 @@ class CardRepo:
                     due_at=datetime.now(timezone.utc),
                     source_session_id=session_id,
                 )
-                .on_conflict_do_nothing(constraint="uq_user_word")
+                .on_conflict_do_nothing(
+                    index_elements=[UserCard.user_id, UserCard.word_id]
+                )
             )
             result = await self.session.execute(stmt)
             added += result.rowcount or 0
@@ -318,7 +324,7 @@ class UsageRepo:
                 llm_output_tokens=llm_out,
             )
             .on_conflict_do_update(
-                constraint="uq_usage_user_day",
+                index_elements=[UsageDay.user_id, UsageDay.day],
                 set_={
                     "voice_turns": UsageDay.voice_turns + voice_turns,
                     "text_turns": UsageDay.text_turns + text_turns,
@@ -365,18 +371,39 @@ async def streak_days(session: AsyncSession, user_id: int, tz_name: str = "UTC")
 
     Derived from the event log rather than stored, so it can be recomputed after
     a bug and cannot silently drift.
+
+    Date grouping happens in Python rather than in SQL on purpose: the tidy
+    Postgres version uses `timezone()`, which SQLite does not have, and this
+    bot is meant to run on both. Bounded to the last 120 days so the row count
+    stays small however long someone has been learning.
     """
-    rows = await session.execute(
-        select(func.date(func.timezone(tz_name, Turn.created_at)).label("d"))
-        .where(Turn.user_id == user_id)
-        .group_by("d")
-        .order_by(func.date(func.timezone(tz_name, Turn.created_at)).desc())
+    since = datetime.now(timezone.utc) - timedelta(days=120)
+    rows = await session.scalars(
+        select(Turn.created_at)
+        .where(Turn.user_id == user_id, Turn.created_at >= since)
+        .order_by(Turn.created_at.desc())
     )
-    days = [row[0] for row in rows.all()]
+
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+
+    days: list[date] = []
+    seen: set[date] = set()
+    for created_at in rows:
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        day = created_at.astimezone(tz).date()
+        if day not in seen:
+            seen.add(day)
+            days.append(day)
+
     if not days:
         return 0
 
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(tz).date()
+    # Today not yet practised is fine; a two-day gap ends the streak.
     if (today - days[0]).days > 1:
         return 0
 

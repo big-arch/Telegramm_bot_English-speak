@@ -5,9 +5,13 @@ learner experiences the bot: the accent their ear trains on, the speaking speed,
 how hard the tutor pushes back, and the register of the conversation. Users pick
 one at onboarding and can switch any time from /settings.
 
-`elevenlabs_voice_id` values below are ElevenLabs' long-standing default voices.
-Verify them against your own account with `python -m scripts.list_voices` and
-override in the database or here — a wrong id fails loudly at first synthesis.
+Each persona carries a voice for every TTS provider so switching provider never
+means losing the cast.
+
+`edge_voice` is the free path: Microsoft's neural voices, no API key, real
+regional accents. `elevenlabs_voice_id` values are ElevenLabs' long-standing
+defaults — verify them against your own account with
+`python -m scripts.list_voices`, since a wrong id fails at first synthesis.
 """
 
 from __future__ import annotations
@@ -25,8 +29,9 @@ class Persona:
     levels: tuple[str, ...]     # CEFR bands this persona suits
     correction_style: str       # soft | balanced | strict — the default, user-overridable
     base_speed: float           # TTS rate multiplier at B1; scaled by level at runtime
+    edge_voice: str             # free default (TTS_PROVIDER=edge)
     elevenlabs_voice_id: str
-    openai_voice: str           # fallback when TTS_PROVIDER=openai
+    openai_voice: str
     character: str              # injected into the tutor system prompt
 
     @property
@@ -44,6 +49,7 @@ PERSONAS: tuple[Persona, ...] = (
         levels=("A1", "A2", "B1"),
         correction_style="soft",
         base_speed=0.92,
+        edge_voice="en-GB-SoniaNeural",
         elevenlabs_voice_id="21m00Tcm4TlvDq8ikWAM",
         openai_voice="shimmer",
         character=(
@@ -62,6 +68,7 @@ PERSONAS: tuple[Persona, ...] = (
         levels=("A2", "B1", "B2"),
         correction_style="soft",
         base_speed=1.0,
+        edge_voice="en-US-GuyNeural",
         elevenlabs_voice_id="pNInz6obpgDQGcFmaJgB",
         openai_voice="onyx",
         character=(
@@ -80,6 +87,7 @@ PERSONAS: tuple[Persona, ...] = (
         levels=("A1", "A2"),
         correction_style="soft",
         base_speed=0.85,
+        edge_voice="en-US-JennyNeural",
         elevenlabs_voice_id="EXAVITQu4vr4xnSDxMaL",
         openai_voice="nova",
         character=(
@@ -98,6 +106,7 @@ PERSONAS: tuple[Persona, ...] = (
         levels=("B1", "B2", "C1"),
         correction_style="strict",
         base_speed=1.0,
+        edge_voice="en-US-EricNeural",
         elevenlabs_voice_id="ErXwobaYiN019PkySvjV",
         openai_voice="echo",
         character=(
@@ -116,6 +125,7 @@ PERSONAS: tuple[Persona, ...] = (
         levels=("B2", "C1", "C2"),
         correction_style="strict",
         base_speed=1.05,
+        edge_voice="en-GB-RyanNeural",
         elevenlabs_voice_id="VR6AewLTigWG4xSOukaG",
         openai_voice="fable",
         character=(

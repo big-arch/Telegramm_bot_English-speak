@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import asyncio
 
-from sqlalchemy.dialects.postgresql import insert
-
 from bot.data.topics import SEED_TOPICS
 from bot.db.base import engine, sessionmaker
 from bot.db.models import Topic
+from bot.db.upsert import insert
 
 
 async def main() -> None:

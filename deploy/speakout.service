@@ -1,0 +1,30 @@
+[Unit]
+Description=SpeakOut Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Telegramm_bot_English-speak
+EnvironmentFile=/home/ubuntu/Telegramm_bot_English-speak/.env
+ExecStart=/home/ubuntu/Telegramm_bot_English-speak/.venv/bin/python -m bot
+
+Restart=always
+RestartSec=10
+# Give running handlers a chance to finish instead of cutting someone off
+# in the middle of a reply.
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=speakout
+
+# Basic hardening — the bot needs nothing outside its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

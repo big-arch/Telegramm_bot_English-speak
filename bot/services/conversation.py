@@ -148,9 +148,8 @@ async def process_turn(
         text_turns=1 if modality == "text" else 0,
         audio_seconds=metrics.audio_seconds if metrics else 0.0,
         tts_characters=len(reply),
-        llm_in=(reply_usage.input_tokens or 0) + (assess_usage.input_tokens if assess_usage else 0),
-        llm_out=(reply_usage.output_tokens or 0)
-        + (assess_usage.output_tokens if assess_usage else 0),
+        llm_in=reply_usage.input_tokens + assess_usage.input_tokens,
+        llm_out=reply_usage.output_tokens + assess_usage.output_tokens,
     )
 
     # One commit per unit of work: the turn, its errors, its cards and the

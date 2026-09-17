@@ -38,6 +38,7 @@ from bot.texts import (
     PHOTO_NOT_FOUND,
     PHOTO_NOT_READABLE,
     PHOTO_NOT_SUPPORTED,
+    PHOTO_TOO_BIG,
     SEND_VOICE_NOT_FILE,
     SESSION_TOO_SHORT,
     THINKING,
@@ -259,35 +260,84 @@ async def on_voice(message: Message, session: DbSession, user: User, bot: Bot) -
 
 @router.message(F.photo)
 async def on_photo(message: Message, session: DbSession, user: User, bot: Bot) -> None:
-    """Talk about a picture the learner sent.
+    """A picture sent the ordinary way: compressed, as a photo."""
+    photo = message.photo[-1] if message.photo else None
+    if photo is None:
+        return
+    await _talk_about_photo(
+        message, session, user, bot,
+        file_id=photo.file_id, size=photo.file_size or 0, mime="image/jpeg",
+    )
+
+
+@router.message(F.document.mime_type.startswith("image/"))
+async def on_image_document(
+    message: Message, session: DbSession, user: User, bot: Bot
+) -> None:
+    """A picture sent as a file, which is not an edge case at all.
+
+    Desktop Telegram sends a dragged-in image as a document by default, and
+    "send without compression" does the same on every client. Those updates
+    carry no `photo` field, so they fell through to the wrong-media handler and
+    were answered with "that's a file, not a voice message" — which is why the
+    bot looked like it could not see photographs while vision was working
+    perfectly.
+    """
+    document = message.document
+    if document is None:
+        return
+    await _talk_about_photo(
+        message, session, user, bot,
+        file_id=document.file_id,
+        size=document.file_size or 0,
+        mime=document.mime_type or "image/jpeg",
+    )
+
+
+async def _talk_about_photo(
+    message: Message,
+    session: DbSession,
+    user: User,
+    bot: Bot,
+    *,
+    file_id: str,
+    size: int,
+    mime: str,
+) -> None:
+    """Talk about a picture the learner sent, however they sent it.
 
     Describing an image is a speaking skill in its own right, and doing it on
     their own photo rather than a stock one is the difference between an
     exercise and a conversation — they already know what is in it and want to
     say something about it.
     """
-    photo = message.photo[-1] if message.photo else None
-    if photo is None:
-        return
-
     if not vision.available():
         # A tutor who cannot see can still ask them to describe it, which is
         # the better exercise anyway. Never a dead end.
         await message.answer(PHOTO_NOT_SUPPORTED)
         return
 
+    # An uncompressed photo off a modern phone is routinely larger than any
+    # vision API will take. Said before the download rather than after, and
+    # with the one action that fixes it.
+    if size and size > settings.max_photo_bytes:
+        await message.answer(PHOTO_TOO_BIG.format(mb=size / 1_000_000))
+        return
+
     status = await message.answer(LOOKING)
 
     try:
-        file = await bot.get_file(photo.file_id)
+        file = await bot.get_file(file_id)
         buffer = await bot.download_file(file.file_path)
         image = buffer.read() if buffer is not None else b""
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - the reason is worth showing
         logger.exception("photo download failed for user %s", user.tg_id)
-        await status.edit_text(ERROR_GENERIC)
+        await status.edit_text(
+            f"{ERROR_GENERIC}\n\n<code>download: {type(exc).__name__}: {exc}</code>"
+        )
         return
 
-    description, _usage, notes = await vision.describe(image, mime="image/jpeg")
+    description, _usage, notes = await vision.describe(image, mime=mime)
     if not description:
         # Every provider had its own reason and none of them reach the learner
         # as a log line. Showing them is what turns "it doesn't work" into
@@ -302,7 +352,7 @@ async def on_photo(message: Message, session: DbSession, user: User, bot: Bot) -
     # wrong and discouraging.
     caption = (message.caption or "").strip()
     if caption:
-        description = f"{description}\n\nThey wrote with it: \"{caption}\""
+        description = f'{description}\n\nThey wrote with it: "{caption}"'
 
     convo = await _ensure_session(session, user)
     topic = await _topic_of(session, convo)
@@ -316,7 +366,7 @@ async def on_photo(message: Message, session: DbSession, user: User, bot: Bot) -
             text="",
             modality="photo",
             photo_description=description,
-            image_file_id=photo.file_id,
+            image_file_id=file_id,
         )
     except Exception:
         logger.exception("photo turn failed for user %s", user.tg_id)

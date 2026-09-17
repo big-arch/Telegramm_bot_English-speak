@@ -60,7 +60,10 @@ class Settings(BaseSettings):
     # is present — its vision is reliable and free — and falls back to Groq.
     vision_provider: str = "auto"  # auto | gemini | groq | off
     groq_vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
-    max_photo_bytes: int = 4_000_000
+    # Gemini leads the vision chain and accepts well past this; the limit is
+    # here so an uncompressed phone photo gets a clear answer rather than a
+    # provider error. Telegram-compressed photos are nowhere near it.
+    max_photo_bytes: int = 8_000_000
 
     # --- Speech recognition ---
     stt_provider: str = "groq"  # groq (free) | openai

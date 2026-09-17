@@ -23,7 +23,7 @@ from bot.callbacks import TopicCB
 from bot.config import settings
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
-from bot.keyboards.common import topics_kb
+from bot.keyboards.common import reader_kb, topics_kb
 from bot.services import conversation as convo_service
 from bot.services import feedback, fluency, images, llm, stt, vision
 from bot.services.speak import send_spoken
@@ -145,6 +145,7 @@ async def _reply(
     user: User,
     text: str,
     photo_query: str | None = None,
+    turn_id: int | None = None,
 ) -> None:
     """Send the tutor's turn: the picture first, then the voice.
 
@@ -178,6 +179,8 @@ async def _reply(
         persona=persona,
         level=user.productive_level,
         caption=text,
+        # Every reply is a text they can now take apart word by word.
+        reply_markup=reader_kb(turn_id) if turn_id else None,
     )
 
 
@@ -245,7 +248,7 @@ async def on_voice(message: Message, session: DbSession, user: User, bot: Bot) -
     await status.edit_text(f"🗣 <i>{transcript.text}</i>")
     await _reply(
         bot, session, chat_id=message.chat.id, convo=convo, user=user,
-        text=result.reply, photo_query=result.photo_query,
+        text=result.reply, photo_query=result.photo_query, turn_id=result.turn.id,
     )
 
 
@@ -323,7 +326,7 @@ async def on_photo(message: Message, session: DbSession, user: User, bot: Bot) -
     await status.delete()
     await _reply(
         bot, session, chat_id=message.chat.id, convo=convo, user=user,
-        text=result.reply, photo_query=result.photo_query,
+        text=result.reply, photo_query=result.photo_query, turn_id=result.turn.id,
     )
 
 
@@ -366,7 +369,7 @@ async def on_text(message: Message, session: DbSession, user: User, bot: Bot) ->
     await status.delete()
     await _reply(
         bot, session, chat_id=message.chat.id, convo=convo, user=user,
-        text=result.reply, photo_query=result.photo_query,
+        text=result.reply, photo_query=result.photo_query, turn_id=result.turn.id,
     )
 
 

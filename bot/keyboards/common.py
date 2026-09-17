@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import personas as personas_mod
+from bot.config import settings
 from bot.callbacks import (
     GoalCB,
     LevelCB,
@@ -15,6 +16,26 @@ from bot.callbacks import (
 )
 from bot.db.models import Topic
 from bot.texts import CORRECTION_STYLES, GOALS, LEVEL_HINTS
+
+
+def reader_kb(turn_id: int) -> InlineKeyboardMarkup | None:
+    """The button that opens the tutor's reply as a tappable page.
+
+    None when there is no public HTTPS URL to open — Telegram refuses a Mini
+    App button otherwise, and a refused button takes the whole message with it.
+    So local polling runs simply do not show it, rather than failing to send
+    the reply at all.
+    """
+    base = (settings.public_base_url or "").rstrip("/")
+    if not base.startswith("https://"):
+        return None
+
+    kb = InlineKeyboardBuilder()
+    kb.button(
+        text="📖 Разобрать по словам",
+        web_app=WebAppInfo(url=f"{base}/app?turn={turn_id}"),
+    )
+    return kb.as_markup()
 
 
 def level_kb() -> InlineKeyboardMarkup:

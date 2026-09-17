@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -267,6 +267,91 @@ class CardRepo:
             .returning(Word)
         )
         return (await self.session.scalars(stmt)).one()
+
+    async def lemmas_for(self, user_id: int) -> set[str]:
+        """Every word this learner is already studying.
+
+        The reader needs it to paint saved words red the moment the page opens
+        rather than a flicker later — reopening it and seeing a blank page
+        looks like the app forgot.
+        """
+        rows = await self.session.scalars(
+            select(Word.lemma).join(UserCard, UserCard.word_id == Word.id).where(
+                UserCard.user_id == user_id
+            )
+        )
+        return {lemma.lower() for lemma in rows}
+
+    async def translated(self, lemma: str) -> Word | None:
+        """A word already carrying a Russian translation, if the catalogue has
+        one. The catalogue is shared, so the second learner to tap "stubborn"
+        pays nothing — and neither does the same learner tapping it twice."""
+        return await self.session.scalar(
+            select(Word).where(
+                func.lower(Word.lemma) == lemma.strip().lower(),
+                Word.translation_ru.is_not(None),
+            )
+        )
+
+    async def save_tapped(
+        self,
+        *,
+        user_id: int,
+        lemma: str,
+        translation_ru: str,
+        pos: str = "unknown",
+        cefr: str = "B1",
+        session_id: int | None = None,
+    ) -> tuple[Word, bool]:
+        """Record a word the learner pointed at, and return (word, is_new).
+
+        Deliberately idempotent: tapping a word twice must not create a second
+        card or reset the schedule of the first. `is_new` is what the reader
+        uses to say "saved" rather than "already in your deck", which is the
+        difference between feeling productive and feeling ignored.
+        """
+        lemma = lemma.strip().lower()
+        word = await self.ensure_word(lemma, cefr=cefr)
+
+        # First translation wins; later taps must not overwrite a good gloss
+        # with a worse one from a different sentence.
+        if translation_ru and not word.translation_ru:
+            word.translation_ru = translation_ru[:128]
+
+        # `pos` is deliberately NOT written back. It is half of the natural key
+        # `ensure_word` upserts on — (lemma, pos) — so rewriting it after the
+        # row exists makes the *next* upsert miss, create a second row for the
+        # same word, and hand out a second card. A test caught exactly that.
+        # The part of speech still reaches the reader, in the response; it just
+        # does not get to move the row it lives in.
+
+        stmt = (
+            insert(UserCard)
+            .values(
+                user_id=user_id,
+                word_id=word.id,
+                due_at=datetime.now(timezone.utc),
+                source_session_id=session_id,
+            )
+            .on_conflict_do_nothing(index_elements=[UserCard.user_id, UserCard.word_id])
+        )
+        result = await self.session.execute(stmt)
+        return word, bool(result.rowcount)
+
+    async def forget(self, *, user_id: int, lemma: str) -> bool:
+        """Undo a tap. Mistaking a word is cheap; being unable to take it back
+        is what makes people stop tapping."""
+        word = await self.session.scalar(
+            select(Word).where(func.lower(Word.lemma) == lemma.strip().lower())
+        )
+        if word is None:
+            return False
+        result = await self.session.execute(
+            delete(UserCard).where(
+                UserCard.user_id == user_id, UserCard.word_id == word.id
+            )
+        )
+        return bool(result.rowcount)
 
     async def add_from_conversation(
         self, *, user_id: int, lemmas: list[str], session_id: int, cefr: str

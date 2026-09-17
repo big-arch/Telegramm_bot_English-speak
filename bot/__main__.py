@@ -185,6 +185,12 @@ def build_app(bot: Bot, dp: Dispatcher, secret: str) -> web.Application:
     app.router.add_get("/", health)
     app.router.add_get("/healthz", health)
 
+    # The word reader rides on the same server as the webhook: same host, same
+    # certificate, no second bill.
+    from bot.webapp import attach as attach_webapp
+
+    attach_webapp(app, bot_token=settings.bot_token.get_secret_value())
+
     SimpleRequestHandler(dispatcher=dp, bot=bot, secret_token=secret).register(
         app, path=settings.webhook_path
     )

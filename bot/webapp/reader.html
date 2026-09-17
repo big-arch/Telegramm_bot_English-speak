@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>SpeakOut · Разбор</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* Telegram hands the page the user's own theme. Matching it is what makes a
+     Mini App feel like part of the client rather than a website in a box. */
+  :root {
+    --bg:      var(--tg-theme-bg-color, #ffffff);
+    --fg:      var(--tg-theme-text-color, #1a1a1a);
+    --muted:   var(--tg-theme-hint-color, #8a8a8e);
+    --card:    var(--tg-theme-secondary-bg-color, #f2f2f7);
+    --link:    var(--tg-theme-link-color, #2f6fed);
+    --mark:    #e5484d;   /* the red the whole feature is about */
+    --mark-bg: rgba(229, 72, 77, 0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --mark: #ff6369; --mark-bg: rgba(255, 99, 105, 0.16); }
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 400 20px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 20px 16px calc(180px + env(safe-area-inset-bottom));
+    max-width: 44rem; margin: 0 auto;
+    /* The point of the page is tapping words, so the browser's own
+       double-tap-to-select must be out of the way. */
+    -webkit-user-select: none; user-select: none;
+  }
+
+  header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 22px; }
+  h1 { font-size: 13px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+       color: var(--muted); margin: 0; }
+  #count { font-size: 13px; color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+
+  #text { font-size: 21px; }
+
+  .w { cursor: pointer; border-radius: 4px; padding: 1px 0; transition: color .16s, background .16s; }
+  .w:active { background: var(--card); }
+  /* Colour is never the only signal — an underline survives colour blindness
+     and a screenshot run through a filter. */
+  .w.on   { color: var(--mark); background: var(--mark-bg);
+            text-decoration: underline; text-decoration-color: var(--mark);
+            text-underline-offset: 3px; text-decoration-thickness: 2px; }
+  .w.busy { opacity: .45; }
+
+  /* The translation card. Slides rather than appears: movement tells you where
+     it came from, which stops it reading as an error dialogue. */
+  #card {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    background: var(--card); color: var(--fg);
+    border-radius: 18px 18px 0 0;
+    padding: 20px 20px calc(22px + env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 40px rgba(0,0,0,.18);
+    transform: translateY(104%); transition: transform .26s cubic-bezier(.2,.8,.3,1);
+  }
+  #card.up { transform: translateY(0); }
+  #grip { width: 36px; height: 4px; border-radius: 2px; background: var(--muted);
+          opacity: .35; margin: -8px auto 14px; }
+
+  #word  { font-size: 25px; font-weight: 600; color: var(--mark); line-height: 1.2; }
+  #pos   { font-size: 13px; color: var(--muted); margin-top: 3px; }
+  #ru    { font-size: 21px; margin-top: 12px; line-height: 1.4; }
+  #note  { font-size: 15px; color: var(--muted); margin-top: 8px; line-height: 1.45; }
+  #state { font-size: 14px; color: var(--muted); margin-top: 16px; display: flex;
+           align-items: center; gap: 8px; flex-wrap: wrap; }
+  #drop  { color: var(--link); cursor: pointer; margin-left: auto; font-size: 14px; }
+
+  #hint  { color: var(--muted); font-size: 15px; margin-top: 28px; line-height: 1.5; }
+  .err   { color: var(--mark); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Разбор по словам</h1>
+  <span id="count"></span>
+</header>
+
+<div id="text">Загружаю…</div>
+<p id="hint">Нажми на любое слово — увидишь перевод, и оно уйдёт в /review.</p>
+
+<div id="card">
+  <div id="grip"></div>
+  <div id="word"></div>
+  <div id="pos"></div>
+  <div id="ru"></div>
+  <div id="note"></div>
+  <div id="state"><span id="status"></span><span id="drop" hidden>Убрать</span></div>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+tg?.ready();
+tg?.expand();
+
+const initData = tg?.initData || "";
+const turnId = new URLSearchParams(location.search).get("turn");
+const saved = new Set();          // lemmas already in the deck
+const spans = new Map();          // lemma -> [span, ...], so one tap paints every copy
+
+const $ = (id) => document.getElementById(id);
+const buzz = (style) => { try { tg?.HapticFeedback?.impactOccurred(style); } catch (_) {} };
+
+function api(path, options = {}) {
+  return fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      // How the server knows who is tapping. Never a user id from the page:
+      // this blob is signed by Telegram with a key derived from the bot token.
+      "X-Telegram-Init-Data": initData,
+      ...(options.headers || {}),
+    },
+  });
+}
+
+/* Splitting on sentences first, then words, so a tapped word can be sent with
+   the sentence it lives in. "Run" alone is forty meanings; "run" in *my nose is
+   running* is the one worth learning. */
+function render(text) {
+  const host = $("text");
+  host.textContent = "";
+  const sentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text];
+
+  for (const sentence of sentences) {
+    for (const piece of sentence.split(/([A-Za-z][A-Za-z'’\-]*)/g)) {
+      if (!piece) continue;
+      if (!/^[A-Za-z]/.test(piece)) { host.append(piece); continue; }
+
+      const span = document.createElement("span");
+      span.className = "w";
+      span.textContent = piece;
+      span.dataset.context = sentence.trim();
+      span.onclick = () => tap(span);
+      host.append(span);
+
+      const key = piece.toLowerCase();
+      if (!spans.has(key)) spans.set(key, []);
+      spans.get(key).push(span);
+    }
+  }
+  paintSaved();
+}
+
+/* A word can be on the page in several places, and its dictionary form may
+   differ from what was tapped — meeting "ran" teaches you "run". Both surface
+   form and lemma get painted, or the page looks like it lost the tap. */
+function paint(lemma, surface, on) {
+  for (const key of new Set([lemma, surface].filter(Boolean))) {
+    for (const span of spans.get(key.toLowerCase()) || []) span.classList.toggle("on", on);
+  }
+  if (on) saved.add(lemma); else saved.delete(lemma);
+  $("count").textContent = saved.size ? `${saved.size} в изучении` : "";
+}
+
+function paintSaved() {
+  for (const lemma of saved) paint(lemma, null, true);
+}
+
+function showCard({ word, pos, ru, note, status, removable }) {
+  $("word").textContent = word;
+  $("pos").textContent = pos || "";
+  $("ru").textContent = ru || "";
+  $("note").textContent = note || "";
+  $("status").textContent = status || "";
+  $("status").className = status && status.startsWith("Не ") ? "err" : "";
+  $("drop").hidden = !removable;
+  $("card").classList.add("up");
+}
+
+let current = null;
+
+async function tap(span) {
+  const surface = span.textContent;
+  const lemma = span.dataset.lemma;
+
+  if (span.classList.contains("on") && lemma) {
+    showCard({ word: lemma, ru: span.dataset.ru || "", pos: span.dataset.pos || "",
+               note: span.dataset.note || "", status: "В твоём словаре", removable: true });
+    current = { lemma, surface };
+    buzz("light");
+    return;
+  }
+
+  span.classList.add("busy");
+  buzz("light");
+  try {
+    const response = await api("/api/word", {
+      method: "POST",
+      body: JSON.stringify({ word: surface, context: span.dataset.context, initData }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+
+    for (const s of spans.get(surface.toLowerCase()) || []) {
+      s.dataset.lemma = data.lemma;
+      s.dataset.ru = data.translation;
+      s.dataset.pos = data.pos || "";
+      s.dataset.note = data.note || "";
+    }
+    paint(data.lemma, surface, true);
+    current = { lemma: data.lemma, surface };
+    showCard({
+      word: data.lemma, pos: data.pos, ru: data.translation, note: data.note,
+      status: data.added ? "Добавлено в /review" : "Уже было в словаре",
+      removable: true,
+    });
+    buzz("medium");
+  } catch (error) {
+    showCard({ word: surface, ru: "", note: "", status: "Не смог перевести — попробуй ещё раз",
+               removable: false });
+  } finally {
+    span.classList.remove("busy");
+  }
+}
+
+$("drop").onclick = async () => {
+  if (!current) return;
+  const { lemma, surface } = current;
+  try {
+    await api("/api/word/remove", { method: "POST", body: JSON.stringify({ lemma, initData }) });
+    paint(lemma, surface, false);
+    $("card").classList.remove("up");
+    buzz("rigid");
+  } catch (_) { /* leaving it in the deck is the harmless direction to fail */ }
+};
+
+$("card").onclick = (event) => {
+  if (event.target.id === "grip" || event.target.id === "card") {
+    $("card").classList.remove("up");
+  }
+};
+
+(async function start() {
+  if (!turnId) { $("text").textContent = "Нечего разбирать."; return; }
+  try {
+    const response = await api(`/api/turn?turn=${encodeURIComponent(turnId)}`);
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    for (const lemma of data.saved) saved.add(lemma);
+    render(data.text || "");
+  } catch (error) {
+    $("text").innerHTML = '<span class="err">Не смог открыть этот ответ.</span>';
+    $("hint").textContent = String(error.message || error).slice(0, 200);
+  }
+})();
+</script>
+</body>
+</html>

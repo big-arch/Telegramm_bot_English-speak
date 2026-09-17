@@ -13,7 +13,16 @@ import pytest_asyncio
 from sqlalchemy import func, select
 
 from bot.db.base import Base, engine, sessionmaker
-from bot.db.models import ErrorRecord, Session, Topic, Turn, UsageDay, User, UserCard
+from bot.db.models import (
+    ErrorRecord,
+    Session,
+    Topic,
+    Turn,
+    UsageDay,
+    User,
+    UserCard,
+    Word,
+)
 from bot.db.repositories import SessionRepo
 from bot.services import conversation as convo_service
 from bot.services import llm
@@ -764,3 +773,100 @@ def test_a_retired_gemini_model_is_recognised_from_its_error():
     assert _is_missing(Fake(404, "models/gemini-3.6-flash is not found"))
     assert _is_missing(Fake(400, "model is not available to new users"))
     assert not _is_missing(Fake(429, "resource exhausted"))
+
+
+# --------------------------------------------------------------------------- #
+# Tapping a word in the reader
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_tapping_a_word_puts_it_in_the_deck_once(db, fixtures):
+    """Tapping twice must not make a second card or reset the first one's
+    schedule — the learner would be punished for re-checking a meaning."""
+    from bot.db.repositories import CardRepo
+
+    user, _topic, convo = fixtures
+    repo = CardRepo(db)
+
+    word, first = await repo.save_tapped(
+        user_id=user.id, lemma="stubborn", translation_ru="упрямый",
+        pos="adjective", session_id=convo.id,
+    )
+    await db.commit()
+    assert first is True
+    assert word.translation_ru == "упрямый"
+
+    _word, second = await repo.save_tapped(
+        user_id=user.id, lemma="stubborn", translation_ru="что-то другое",
+    )
+    await db.commit()
+    assert second is False, "a second tap must not create a second card"
+
+    cards = await db.scalar(
+        select(func.count()).select_from(UserCard).where(UserCard.user_id == user.id)
+    )
+    assert cards == 1
+
+    # The first gloss stands: a later tap from a different sentence must not
+    # overwrite a good translation with a worse one.
+    stored = await db.scalar(select(Word).where(Word.lemma == "stubborn"))
+    assert stored.translation_ru == "упрямый"
+
+
+@pytest.mark.asyncio
+async def test_the_reader_knows_which_words_are_already_red(db, fixtures):
+    """Reopening the reader and seeing a blank page looks like it forgot."""
+    from bot.db.repositories import CardRepo
+
+    user, _topic, _convo = fixtures
+    repo = CardRepo(db)
+    await repo.save_tapped(user_id=user.id, lemma="queue", translation_ru="очередь")
+    await repo.save_tapped(user_id=user.id, lemma="stubborn", translation_ru="упрямый")
+    await db.commit()
+
+    assert await repo.lemmas_for(user.id) == {"queue", "stubborn"}
+
+
+@pytest.mark.asyncio
+async def test_a_tap_can_be_taken_back(db, fixtures):
+    """Being unable to undo is what stops people tapping in the first place."""
+    from bot.db.repositories import CardRepo
+
+    user, _topic, _convo = fixtures
+    repo = CardRepo(db)
+    await repo.save_tapped(user_id=user.id, lemma="queue", translation_ru="очередь")
+    await db.commit()
+
+    assert await repo.forget(user_id=user.id, lemma="Queue") is True
+    await db.commit()
+    assert await repo.lemmas_for(user.id) == set()
+    # Undoing something that was never there is not an error.
+    assert await repo.forget(user_id=user.id, lemma="nonexistent") is False
+
+
+@pytest.mark.asyncio
+async def test_a_cached_translation_costs_no_model_call(db, fixtures):
+    """The catalogue is shared, so the second learner to tap "stubborn" pays
+    nothing — and neither does the same learner tapping it twice."""
+    from bot.db.repositories import CardRepo
+
+    user, _topic, _convo = fixtures
+    repo = CardRepo(db)
+    await repo.save_tapped(user_id=user.id, lemma="stubborn", translation_ru="упрямый")
+    await db.commit()
+
+    cached = await repo.translated("STUBBORN")
+    assert cached is not None and cached.translation_ru == "упрямый"
+    assert await repo.translated("never-seen") is None
+
+
+def test_only_word_like_taps_reach_the_model():
+    """A tap can land on punctuation or a number, and the vocabulary catalogue
+    is shared between every learner."""
+    from bot.services.translate import is_a_word
+
+    for good in ("run", "look forward to", "don't", "well-known"):
+        assert is_a_word(good), good
+    for bad in ("", "  ", "42", "!!!", "—", "x" * 60):
+        assert not is_a_word(bad), repr(bad)

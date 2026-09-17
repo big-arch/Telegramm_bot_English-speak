@@ -671,3 +671,96 @@ async def test_a_non_image_response_is_not_offered_to_telegram(monkeypatch):
 
     url, _ = await images.look_up("something obscure")
     assert url is None
+
+
+# --------------------------------------------------------------------------- #
+# Looking at the learner's photo
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_a_dead_vision_model_does_not_blind_the_bot(monkeypatch):
+    """The reported failure: conversation worked, photos did not. Vision was
+    the one path pinned to a single vendor, so one retired model name took the
+    whole feature out while everything else carried on."""
+    from bot.services import vision
+    from bot.services.backends.base import VisionUnsupported
+
+    class Blind:
+        async def describe_image(self, **kwargs):
+            raise VisionUnsupported("404 model not found")
+
+    class Seeing:
+        async def describe_image(self, **kwargs):
+            return "A cat asleep on a windowsill.", Usage(20, 30)
+
+    monkeypatch.setattr(vision, "_candidates", lambda: ["gemini", "groq"])
+    monkeypatch.setattr(vision, "_backend", lambda p: Blind() if p == "gemini" else Seeing())
+
+    text, usage, notes = await vision.describe(b"x" * 64)
+    assert text == "A cat asleep on a windowsill."
+    assert usage.output_tokens == 30
+    # The dead provider is named rather than silently skipped.
+    assert any("gemini" in note and "404" in note for note in notes)
+
+
+@pytest.mark.asyncio
+async def test_when_nothing_can_see_the_reasons_survive(monkeypatch):
+    """"Couldn't see it" is a symptom. The learner is the only person who can
+    carry the cause back to someone who can fix it."""
+    from bot.services import vision
+
+    class Broken:
+        def __init__(self, why):
+            self.why = why
+
+        async def describe_image(self, **kwargs):
+            raise RuntimeError(self.why)
+
+    monkeypatch.setattr(vision, "_candidates", lambda: ["gemini", "groq"])
+    monkeypatch.setattr(
+        vision, "_backend", lambda p: Broken("quota exhausted" if p == "gemini" else "bad key")
+    )
+
+    text, _, notes = await vision.describe(b"x" * 64)
+    assert text is None
+    assert any("quota exhausted" in note for note in notes)
+    assert any("bad key" in note for note in notes)
+
+
+def test_every_keyed_provider_is_a_vision_candidate(monkeypatch):
+    """Preference leads, but it must not be the only one tried."""
+    from bot.config import settings as cfg
+    from bot.services import vision
+    from pydantic import SecretStr
+
+    monkeypatch.setattr(cfg, "vision_provider", "gemini")
+    monkeypatch.setattr(cfg, "gemini_api_key", SecretStr("g"))
+    monkeypatch.setattr(cfg, "groq_api_key", SecretStr("q"))
+    monkeypatch.setattr(cfg, "anthropic_api_key", None)
+
+    assert vision._candidates() == ["gemini", "groq"]
+
+    monkeypatch.setattr(cfg, "vision_provider", "off")
+    assert vision._candidates() == []
+    assert vision.available() is False
+
+
+def test_a_retired_gemini_model_is_recognised_from_its_error():
+    """Google reports it as a 404 whose text names no model, so both the code
+    and the wording have to be enough to act on."""
+    from google.genai import errors as genai_errors
+
+    from bot.services.backends.gemini_backend import _is_missing
+
+    class Fake(genai_errors.APIError):
+        def __init__(self, code, message):
+            self.code = code
+            self.message = message
+
+        def __str__(self):
+            return self.message
+
+    assert _is_missing(Fake(404, "models/gemini-3.6-flash is not found"))
+    assert _is_missing(Fake(400, "model is not available to new users"))
+    assert not _is_missing(Fake(429, "resource exhausted"))

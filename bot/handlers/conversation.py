@@ -284,9 +284,14 @@ async def on_photo(message: Message, session: DbSession, user: User, bot: Bot) -
         await status.edit_text(ERROR_GENERIC)
         return
 
-    description, _usage = await vision.describe(image, mime="image/jpeg")
+    description, _usage, notes = await vision.describe(image, mime="image/jpeg")
     if not description:
-        await status.edit_text(PHOTO_NOT_READABLE)
+        # Every provider had its own reason and none of them reach the learner
+        # as a log line. Showing them is what turns "it doesn't work" into
+        # something anyone can act on — the lesson from the photo-sending bug.
+        logger.info("vision failed for user %s: %s", user.tg_id, "; ".join(notes))
+        report = "\n".join(f"• <code>{note}</code>" for note in notes)
+        await status.edit_text(f"{PHOTO_NOT_READABLE}\n\n{report}")
         return
 
     # A caption is usually a fragment rather than a sentence, so it is shown to

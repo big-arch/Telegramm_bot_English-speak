@@ -233,6 +233,10 @@ class CardRepo:
             .where(
                 UserCard.user_id == user_id,
                 UserCard.due_at <= datetime.now(timezone.utc),
+                # Archived words are out of rotation until the learner resets
+                # the archive; they keep their due date, so without this they
+                # would keep coming back through every other queue.
+                UserCard.state != "archived",
             )
             .order_by(UserCard.due_at)
             .limit(limit)
@@ -248,6 +252,7 @@ class CardRepo:
                 .where(
                     UserCard.user_id == user_id,
                     UserCard.due_at <= datetime.now(timezone.utc),
+                    UserCard.state != "archived",
                 )
             )
             or 0
@@ -282,6 +287,65 @@ class CardRepo:
         if origin is not None:
             stmt = stmt.where(UserCard.origin == origin)
         return {lemma.lower() for lemma in await self.session.scalars(stmt)}
+
+    async def study_queue(self, user_id: int, limit: int = 40) -> list[tuple[UserCard, Word]]:
+        """What to show in the review app: everything not archived, due first.
+
+        Deliberately not limited to cards that are due. Someone who opens the
+        app wanting to study should always find something — being told "come
+        back tomorrow" is how a habit dies in its first week. Due cards lead
+        because they are the ones about to be forgotten.
+        """
+        rows = await self.session.execute(
+            select(UserCard, Word)
+            .join(Word, UserCard.word_id == Word.id)
+            .where(UserCard.user_id == user_id, UserCard.state != "archived")
+            .order_by(UserCard.due_at)
+            .limit(limit)
+        )
+        return [(card, word) for card, word in rows.all()]
+
+    async def archive(self, *, user_id: int, card_id: int) -> bool:
+        """"I know this one." Out of rotation until the archive is reset.
+
+        Kept rather than deleted: a word someone was confident about six months
+        ago is exactly the kind of thing worth handing back later, and deleting
+        it throws away the only evidence that they ever met it.
+        """
+        result = await self.session.execute(
+            update(UserCard)
+            .where(UserCard.id == card_id, UserCard.user_id == user_id)
+            .values(state="archived", last_reviewed_at=datetime.now(timezone.utc))
+        )
+        return bool(result.rowcount)
+
+    async def archived_count(self, user_id: int) -> int:
+        return (
+            await self.session.scalar(
+                select(func.count())
+                .select_from(UserCard)
+                .where(UserCard.user_id == user_id, UserCard.state == "archived")
+            )
+        ) or 0
+
+    async def reset_archive(self, user_id: int) -> int:
+        """Bring every archived word back, due now.
+
+        The schedule is reset with it. Whatever interval a card had earned
+        before it was archived is not evidence about a word the learner has
+        deliberately asked to see again.
+        """
+        result = await self.session.execute(
+            update(UserCard)
+            .where(UserCard.user_id == user_id, UserCard.state == "archived")
+            .values(
+                state="new",
+                due_at=datetime.now(timezone.utc),
+                interval_days=0,
+                ease=2.5,
+            )
+        )
+        return result.rowcount or 0
 
     async def translated(self, lemma: str) -> Word | None:
         """A word already carrying a Russian translation, if the catalogue has

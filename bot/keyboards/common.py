@@ -38,6 +38,17 @@ def reader_kb(turn_id: int) -> InlineKeyboardMarkup | None:
     return kb.as_markup()
 
 
+def review_app_kb() -> InlineKeyboardMarkup | None:
+    """The button that opens the know / don't-know app. None without HTTPS."""
+    base = (settings.public_base_url or "").rstrip("/")
+    if not base.startswith("https://"):
+        return None
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔁 Повторять слова", web_app=WebAppInfo(url=f"{base}/review"))
+    return kb.as_markup()
+
+
 def level_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for level, hint in LEVEL_HINTS.items():

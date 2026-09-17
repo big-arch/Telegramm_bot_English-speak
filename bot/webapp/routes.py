@@ -14,20 +14,22 @@ reader would be a way to put arbitrary text into someone else's lesson history.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 from aiohttp import web
 from sqlalchemy import select
 
 from bot.db.base import sessionmaker
-from bot.db.models import Turn, User
+from bot.db.models import Turn, User, UserCard
 from bot.db.repositories import CardRepo
-from bot.services import translate
+from bot.services import srs, translate
 from bot.webapp.auth import InvalidInitData, telegram_id
 
 logger = logging.getLogger(__name__)
 
 PAGE = Path(__file__).parent / "reader.html"
+REVIEW_PAGE = Path(__file__).parent / "review.html"
 
 # The learner's own words are their business; a reader that could be pointed at
 # any turn id would leak whole conversations.
@@ -165,9 +167,116 @@ async def untap_word(request: web.Request) -> web.Response:
     return web.json_response({"removed": removed})
 
 
+# --------------------------------------------------------------------------- #
+# Review: know it, or don't
+# --------------------------------------------------------------------------- #
+
+
+async def review_page(request: web.Request) -> web.Response:
+    return web.Response(
+        body=REVIEW_PAGE.read_bytes(),
+        content_type="text/html",
+        charset="utf-8",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+async def review_queue(request: web.Request) -> web.Response:
+    """The words to go through, plus how many are sitting in the archive."""
+    async with sessionmaker() as db:
+        user = await _learner(request, db)
+        repo = CardRepo(db)
+        queue = await repo.study_queue(user.id)
+        archived = await repo.archived_count(user.id)
+
+    return web.json_response({
+        "cards": [
+            {
+                "id": card.id,
+                "word": word.lemma,
+                "translation": word.translation_ru or "",
+                "pos": word.pos if word.pos != "unknown" else "",
+            }
+            for card, word in queue
+        ],
+        "archived": archived,
+    })
+
+
+async def review_answer(request: web.Request) -> web.Response:
+    """One card, answered.
+
+    "Know" archives it; "don't know" is a lapse, which SM-2 already knows how
+    to price — it does not throw the card's history away, it shortens the
+    interval and brings it back sooner.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        raise web.HTTPBadRequest(text="expected json")
+
+    try:
+        card_id = int(body.get("card", 0))
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="card must be a number")
+    knows = bool(body.get("known"))
+
+    async with sessionmaker() as db:
+        user = await _learner(request, db, body)
+        repo = CardRepo(db)
+
+        if knows:
+            if not await repo.archive(user_id=user.id, card_id=card_id):
+                raise web.HTTPForbidden(text="not your card")
+            await db.commit()
+            return web.json_response({"archived": True})
+
+        card = await db.get(UserCard, card_id)
+        if card is None or card.user_id != user.id:
+            raise web.HTTPForbidden(text="not your card")
+
+        updated = srs.review(
+            srs.CardState(
+                interval_days=card.interval_days, ease=card.ease,
+                reps=card.reps, lapses=card.lapses, state=card.state,
+            ),
+            grade=1,  # "don't know" is Again, the one grade this UI can express
+        )
+        card.interval_days = updated.interval_days
+        card.ease = updated.ease
+        card.reps = updated.reps
+        card.lapses = updated.lapses
+        card.state = updated.state
+        card.due_at = srs.due_at(updated)
+        card.last_reviewed_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    return web.json_response({"archived": False})
+
+
+async def review_reset(request: web.Request) -> web.Response:
+    """Empty the archive: everything the learner said they knew comes back."""
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+
+    async with sessionmaker() as db:
+        user = await _learner(request, db, body)
+        restored = await CardRepo(db).reset_archive(user.id)
+        await db.commit()
+
+    return web.json_response({"restored": restored})
+
+
 def attach(app: web.Application, *, bot_token: str) -> None:
     app["bot_token"] = bot_token
     app.router.add_get("/app", page)
     app.router.add_get("/api/turn", read_turn)
     app.router.add_post("/api/word", tap_word)
     app.router.add_post("/api/word/remove", untap_word)
+
+    app.router.add_get("/review", review_page)
+    app.router.add_get("/api/review", review_queue)
+    app.router.add_post("/api/review/answer", review_answer)
+    app.router.add_post("/api/review/reset", review_reset)

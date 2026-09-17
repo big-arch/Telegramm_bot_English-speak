@@ -209,3 +209,113 @@ async def test_an_unsigned_tap_writes_to_nobodys_vocabulary(reader):
         headers={"X-Telegram-Init-Data": forged},
     )
     assert response.status == 401
+
+
+# --------------------------------------------------------------------------- #
+# Review: know it, or don't
+# --------------------------------------------------------------------------- #
+
+
+async def _stock(db, user_id: int, lemmas: list[str]) -> None:
+    from bot.db.repositories import CardRepo
+
+    repo = CardRepo(db)
+    for lemma in lemmas:
+        await repo.save_tapped(
+            user_id=user_id, lemma=lemma, translation_ru=f"перевод-{lemma}"
+        )
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_knowing_a_word_archives_it_and_resetting_brings_it_back(reader):
+    client, _turn_id, user_id = reader
+    headers = {"X-Telegram-Init-Data": valid(4242)}
+
+    async with sessionmaker() as db:
+        await _stock(db, user_id, ["queue", "stubborn", "grocery"])
+
+    queue = await (await client.get("/api/review", headers=headers)).json()
+    assert len(queue["cards"]) == 3 and queue["archived"] == 0
+    first = queue["cards"][0]
+    assert first["translation"].startswith("перевод-")
+
+    answered = await (
+        await client.post(
+            "/api/review/answer",
+            json={"card": first["id"], "known": True},
+            headers=headers,
+        )
+    ).json()
+    assert answered == {"archived": True}
+
+    # Out of rotation, but not deleted — the archive counts it.
+    after = await (await client.get("/api/review", headers=headers)).json()
+    assert len(after["cards"]) == 2 and after["archived"] == 1
+
+    restored = await (
+        await client.post("/api/review/reset", json={}, headers=headers)
+    ).json()
+    assert restored == {"restored": 1}
+
+    back = await (await client.get("/api/review", headers=headers)).json()
+    assert len(back["cards"]) == 3 and back["archived"] == 0
+
+
+@pytest.mark.asyncio
+async def test_not_knowing_a_word_keeps_it_and_brings_it_back_sooner(reader):
+    """"Don't know" is a lapse, not a deletion: SM-2 already knows how to price
+    it, and throwing the card's history away would lose what it has learned
+    about this learner."""
+    from bot.db.models import UserCard
+
+    client, _turn_id, user_id = reader
+    headers = {"X-Telegram-Init-Data": valid(4242)}
+
+    async with sessionmaker() as db:
+        await _stock(db, user_id, ["stubborn"])
+
+    card = (await (await client.get("/api/review", headers=headers)).json())["cards"][0]
+    answered = await (
+        await client.post(
+            "/api/review/answer",
+            json={"card": card["id"], "known": False},
+            headers=headers,
+        )
+    ).json()
+    assert answered == {"archived": False}
+
+    async with sessionmaker() as db:
+        stored = await db.get(UserCard, card["id"])
+        assert stored.state == "relearning"
+        assert stored.lapses == 1
+        assert stored.last_reviewed_at is not None
+
+    # Still in the queue, because it is exactly the word they need again.
+    assert len((await (await client.get("/api/review", headers=headers)).json())["cards"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_nobody_can_answer_another_learners_card(reader):
+    client, _turn_id, user_id = reader
+
+    async with sessionmaker() as db:
+        await _stock(db, user_id, ["stubborn"])
+
+    card = (
+        await (
+            await client.get(
+                "/api/review", headers={"X-Telegram-Init-Data": valid(4242)}
+            )
+        ).json()
+    )["cards"][0]
+
+    for payload in ({"card": card["id"], "known": True}, {"card": card["id"], "known": False}):
+        response = await client.post(
+            "/api/review/answer", json=payload,
+            headers={"X-Telegram-Init-Data": valid(777)},
+        )
+        assert response.status == 403
+
+    assert (await client.post("/api/review/answer", json={"card": 1})).status == 401
+    assert (await client.post("/api/review/reset", json={})).status == 401

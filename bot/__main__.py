@@ -42,6 +42,7 @@ COMMANDS = [
     BotCommand(command="finish", description="Закончить и получить разбор"),
     BotCommand(command="review", description="Повторить слова"),
     BotCommand(command="photo", description="Показать фото: /photo hamburger"),
+    BotCommand(command="diag", description="Проверка: что работает, что нет"),
     BotCommand(command="progress", description="Мой прогресс"),
     BotCommand(command="mistakes", description="Мои ошибки"),
     BotCommand(command="settings", description="Настройки"),

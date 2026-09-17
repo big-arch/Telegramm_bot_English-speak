@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>SpeakOut · Повторение</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg:      var(--tg-theme-bg-color, #ffffff);
+    --fg:      var(--tg-theme-text-color, #1a1a1a);
+    --muted:   var(--tg-theme-hint-color, #8a8a8e);
+    --card:    var(--tg-theme-secondary-bg-color, #f2f2f7);
+    --link:    var(--tg-theme-link-color, #2f6fed);
+    --know:    #2f9e57;
+    --dont:    #e5484d;
+    --know-bg: rgba(47, 158, 87, .12);
+    --dont-bg: rgba(229, 72, 77, .12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --know: #4cc47c; --dont: #ff6369;
+            --know-bg: rgba(76,196,124,.18); --dont-bg: rgba(255,99,105,.18); }
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
+  body {
+    font: 400 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    max-width: 34rem; margin: 0 auto;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  header { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  #left { font-variant-numeric: tabular-nums; }
+  #bar { flex: 1; height: 3px; border-radius: 2px; background: var(--card); overflow: hidden; }
+  #fill { height: 100%; width: 0; background: var(--link); transition: width .3s ease; }
+
+  /* The card fills what is left, so the word sits in the optical middle of the
+     screen however tall the phone is. */
+  main { flex: 1; display: flex; flex-direction: column; align-items: center;
+         justify-content: center; text-align: center; gap: 14px; padding: 24px 0; }
+
+  #word { font-size: 40px; font-weight: 600; line-height: 1.15; word-break: break-word; }
+  #pos  { font-size: 14px; color: var(--muted); }
+
+  /* Hidden until they answer. Seeing the translation before deciding is not a
+     review, it is reading — and it quietly destroys the schedule. */
+  #answer { font-size: 26px; color: var(--dont); opacity: 0; transform: translateY(6px);
+            transition: opacity .2s, transform .2s; min-height: 34px; }
+  #answer.show { opacity: 1; transform: none; }
+
+  #buttons { display: flex; gap: 12px; }
+  button {
+    flex: 1; font: inherit; font-size: 17px; font-weight: 600;
+    padding: 18px 12px; border: 0; border-radius: 16px; color: var(--fg);
+    background: var(--card); cursor: pointer; transition: transform .1s, filter .15s;
+  }
+  button:active { transform: scale(.97); }
+  button:disabled { opacity: .4; }
+  #no  { background: var(--dont-bg); color: var(--dont); }
+  #yes { background: var(--know-bg); color: var(--know); }
+
+  footer { text-align: center; font-size: 13px; color: var(--muted); padding-top: 14px; }
+  #reset { color: var(--link); cursor: pointer; }
+
+  #done { display: none; text-align: center; }
+  #done h2 { font-size: 22px; margin: 0 0 8px; }
+  #done p  { color: var(--muted); margin: 0 0 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <span id="left"></span>
+  <span id="bar"><span id="fill"></span></span>
+</header>
+
+<main>
+  <div id="live">
+    <div id="word">…</div>
+    <div id="pos"></div>
+    <div id="answer"></div>
+  </div>
+  <div id="done">
+    <h2 id="done-title">Готово 👌</h2>
+    <p id="done-text"></p>
+  </div>
+</main>
+
+<div id="buttons">
+  <button id="no">Не знаю</button>
+  <button id="yes">Знаю</button>
+</div>
+
+<footer>
+  <span id="archive"></span>
+</footer>
+
+<script>
+const tg = window.Telegram?.WebApp;
+tg?.ready();
+tg?.expand();
+
+const initData = tg?.initData || "";
+const $ = (id) => document.getElementById(id);
+const buzz = (s) => { try { tg?.HapticFeedback?.impactOccurred(s); } catch (_) {} };
+
+let queue = [];
+let index = 0;
+let total = 0;
+let archived = 0;
+let revealed = false;
+
+function api(path, options = {}) {
+  return fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Telegram-Init-Data": initData,
+      ...(options.headers || {}),
+    },
+  });
+}
+
+function renderArchive() {
+  $("archive").innerHTML = archived
+    ? `В архиве ${archived} · <span id="reset">вернуть все</span>`
+    : "Слова, которые ты знаешь, уходят в архив";
+  const reset = $("reset");
+  if (reset) reset.onclick = resetArchive;
+}
+
+function show() {
+  const card = queue[index];
+  if (!card) return finish();
+
+  revealed = false;
+  $("word").textContent = card.word;
+  $("pos").textContent = card.pos || "";
+  $("answer").textContent = "";
+  $("answer").classList.remove("show");
+  $("left").textContent = `${index + 1} / ${total}`;
+  $("fill").style.width = `${(index / total) * 100}%`;
+  $("no").disabled = $("yes").disabled = false;
+}
+
+function finish() {
+  $("live").style.display = "none";
+  $("buttons").style.display = "none";
+  $("done").style.display = "block";
+  $("fill").style.width = "100%";
+  $("left").textContent = total ? `${total} / ${total}` : "";
+  $("done-title").textContent = total ? "Готово 👌" : "Пока нечего повторять";
+  $("done-text").textContent = total
+    ? "Слова вернутся сами, когда ты начнёшь их забывать."
+    : "Поговори немного или разбери ответ по словам — слова появятся здесь.";
+  renderArchive();
+}
+
+async function answer(known) {
+  const card = queue[index];
+  if (!card) return;
+
+  // "Don't know" shows the translation first and waits: the point of the
+  // moment is seeing the right answer after having tried to recall it.
+  if (!known && !revealed) {
+    revealed = true;
+    $("answer").textContent = card.translation || "—";
+    $("answer").classList.add("show");
+    $("no").textContent = "Дальше";
+    buzz("light");
+    send(card.id, false);
+    return;
+  }
+
+  if (known) {
+    archived += 1;
+    send(card.id, true);
+    buzz("medium");
+  }
+
+  $("no").textContent = "Не знаю";
+  index += 1;
+  show();
+  renderArchive();
+}
+
+/* Fire-and-forget on purpose: the learner should never wait on the network
+   between two cards. A dropped answer costs one card's schedule, and blocking
+   the queue costs the session. */
+function send(cardId, known) {
+  api("/api/review/answer", {
+    method: "POST",
+    body: JSON.stringify({ card: cardId, known, initData }),
+  }).catch(() => {});
+}
+
+async function resetArchive() {
+  if (!archived) return;
+  $("archive").textContent = "Возвращаю…";
+  try {
+    const response = await api("/api/review/reset", {
+      method: "POST", body: JSON.stringify({ initData }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    buzz("rigid");
+    location.reload();
+  } catch (_) {
+    renderArchive();
+  }
+}
+
+$("no").onclick = () => answer(false);
+$("yes").onclick = () => answer(true);
+
+(async function start() {
+  try {
+    const response = await api("/api/review");
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    queue = data.cards || [];
+    archived = data.archived || 0;
+    total = queue.length;
+    renderArchive();
+    total ? show() : finish();
+  } catch (error) {
+    $("word").textContent = "Не открылось";
+    $("pos").textContent = String(error.message || error).slice(0, 160);
+    $("buttons").style.display = "none";
+  }
+})();
+</script>
+</body>
+</html>

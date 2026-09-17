@@ -20,7 +20,7 @@ from sqlalchemy.orm import joinedload
 from bot.callbacks import ReviewCB
 from bot.db.models import ReviewLog, User, UserCard, Word
 from bot.db.repositories import CardRepo
-from bot.keyboards.common import review_kb, show_answer_kb
+from bot.keyboards.common import review_app_kb, review_kb, show_answer_kb
 from bot.services import srs
 from bot.texts import REVIEW_EMPTY
 
@@ -37,7 +37,37 @@ async def _prompt(message: Message, card: UserCard) -> None:
 
 @router.message(Command("review"))
 async def cmd_review(message: Message, session: DbSession, user: User) -> None:
-    cards = await CardRepo(session).due(user.id, limit=srs.DAILY_REVIEW_CAP)
+    """Open the review app, or fall back to the in-chat cards.
+
+    The app is the better experience by some distance — one word at a time,
+    two buttons, no message per card clogging the conversation. The chat
+    version stays as the fallback for when there is no public HTTPS to serve
+    the app from, because a learner should never be told a feature is missing
+    for a reason that is about hosting.
+    """
+    repo = CardRepo(session)
+    waiting = len(await repo.study_queue(user.id, limit=1))
+    archived = await repo.archived_count(user.id)
+
+    app = review_app_kb()
+    if app is not None:
+        if not waiting and not archived:
+            await message.answer(REVIEW_EMPTY)
+            return
+        due = await repo.count_due(user.id)
+        lines = ["🔁 <b>Повторение</b>", ""]
+        lines.append(
+            f"Пора повторить: <b>{due}</b>" if due
+            else "Срочного ничего — но можно пройтись по всему списку."
+        )
+        if archived:
+            lines.append(f"В архиве: <b>{archived}</b>")
+        lines += ["", "<i>Знаю — слово уходит в архив. Не знаю — покажу перевод "
+                  "и верну его пораньше.</i>"]
+        await message.answer("\n".join(lines), reply_markup=app)
+        return
+
+    cards = await repo.due(user.id, limit=srs.DAILY_REVIEW_CAP)
     if not cards:
         await message.answer(REVIEW_EMPTY)
         return

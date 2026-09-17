@@ -85,7 +85,7 @@ async def read_turn(request: web.Request) -> web.Response:
         if turn is None or turn.user_id != user.id:
             raise web.HTTPForbidden(text=FORBIDDEN)
 
-        known = await CardRepo(db).lemmas_for(user.id)
+        known = await CardRepo(db).lemmas_for(user.id, origin="tapped")
 
     return web.json_response(
         {"text": turn.assistant_text or "", "saved": sorted(known)}

@@ -251,6 +251,13 @@ class UserCard(Base):
         ForeignKey("sessions.id", ondelete="SET NULL")
     )
 
+    # How it got here: "conversation" when the assessor picked it out of a turn
+    # by itself, "tapped" when the learner pointed at it in the reader. Both
+    # are studied the same way, but only the second may be painted red — the
+    # reader marking words nobody chose looks like a rendering fault, which is
+    # exactly how it was reported.
+    origin: Mapped[str] = mapped_column(String(16), default="conversation")
+
     # Eager-loadable from the queue query. Lazy access would raise
     # MissingGreenlet in async code, so callers always joinedload this.
     word: Mapped["Word"] = relationship(lazy="raise")

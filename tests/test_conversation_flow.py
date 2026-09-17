@@ -870,3 +870,129 @@ def test_only_word_like_taps_reach_the_model():
         assert is_a_word(good), good
     for bad in ("", "  ", "42", "!!!", "—", "x" * 60):
         assert not is_a_word(bad), repr(bad)
+
+
+@pytest.mark.asyncio
+async def test_the_reader_marks_only_words_the_learner_chose(db, fixtures):
+    """Reported as "the words underline themselves". The assessor collects up
+    to three words per turn by itself, and painting those made the reader look
+    like it was marking text at random. Red must mean "I picked this"."""
+    from bot.db.repositories import CardRepo
+
+    user, _topic, convo = fixtures
+    repo = CardRepo(db)
+
+    await repo.add_from_conversation(
+        user_id=user.id, lemmas=["grocery", "queue"], session_id=convo.id, cefr="B1"
+    )
+    await repo.save_tapped(user_id=user.id, lemma="stubborn", translation_ru="упрямый")
+    await db.commit()
+
+    # Everything is being studied...
+    assert await repo.lemmas_for(user.id) == {"grocery", "queue", "stubborn"}
+    # ...but only one of them was chosen, and only that one is painted.
+    assert await repo.lemmas_for(user.id, origin="tapped") == {"stubborn"}
+
+
+@pytest.mark.asyncio
+async def test_a_translation_survives_the_model_refusing_json(monkeypatch):
+    """Reported as "almost no word has a translation". Structured output is the
+    best answer, not the only acceptable one — a tap must not come back empty
+    because JSON mode was in a bad mood."""
+    from bot.services import translate
+
+    class NoJson:
+        async def complete_json(self, *, system, prompt, schema, max_tokens):
+            return None, Usage()
+
+        async def complete(self, *, system, messages, max_tokens):
+            return "run\nбежать", Usage(10, 5)
+
+    monkeypatch.setattr(llm, "get_backend", lambda: NoJson())
+
+    sense = await translate.look_up("running", context="He is running late.")
+    assert sense is not None
+    assert sense.lemma == "run" and sense.translation_ru == "бежать"
+
+
+@pytest.mark.asyncio
+async def test_a_long_note_no_longer_costs_the_whole_translation(monkeypatch):
+    """The schema used to cap every field, so one word too many in the note
+    failed validation and returned nothing — turning a good translation into
+    "не смог перевести". Length is trimmed now, not rejected."""
+    from bot.services import translate
+
+    class Verbose:
+        async def complete_json(self, *, system, prompt, schema, max_tokens):
+            return schema(
+                lemma="stubborn", translation_ru="упрямый", pos="adjective",
+                note_ru="очень " * 60,
+            ), Usage(10, 5)
+
+        async def complete(self, *, system, messages, max_tokens):  # pragma: no cover
+            raise AssertionError("the structured answer was good enough")
+
+    monkeypatch.setattr(llm, "get_backend", lambda: Verbose())
+
+    sense = await translate.look_up("stubborn", context="A stubborn queue.")
+    assert sense is not None
+    assert sense.translation_ru == "упрямый"
+    assert len(sense.note_ru) <= 120
+
+
+@pytest.mark.asyncio
+async def test_the_free_dictionary_is_the_floor_under_both_model_attempts(monkeypatch):
+    """The user's own suggestion, and the right one: when the model gives
+    nothing, a keyless dictionary still answers."""
+    import httpx as _httpx
+
+    from bot.services import translate
+
+    class Silent:
+        async def complete_json(self, *, system, prompt, schema, max_tokens):
+            return None, Usage()
+
+        async def complete(self, *, system, messages, max_tokens):
+            return "", Usage()
+
+    monkeypatch.setattr(llm, "get_backend", lambda: Silent())
+
+    async def get(self, url, **kwargs):
+        return _FakeResponse({"responseStatus": 200,
+                              "responseData": {"translatedText": "гамбургер"}})
+
+    monkeypatch.setattr(_httpx.AsyncClient, "get", get)
+
+    sense = await translate.look_up("hamburger", context="I ate a hamburger.")
+    assert sense is not None and sense.translation_ru == "гамбургер"
+
+
+@pytest.mark.asyncio
+async def test_the_dictionarys_own_complaints_are_not_offered_as_translations(
+    monkeypatch,
+):
+    """MyMemory answers 200 with its quota notices in the translation field,
+    shouted in capitals. Saving one as a flashcard would be worse than nothing."""
+    import httpx as _httpx
+
+    from bot.services import translate
+
+    class Silent:
+        async def complete_json(self, *, system, prompt, schema, max_tokens):
+            return None, Usage()
+
+        async def complete(self, *, system, messages, max_tokens):
+            return "", Usage()
+
+    monkeypatch.setattr(llm, "get_backend", lambda: Silent())
+
+    async def get(self, url, **kwargs):
+        return _FakeResponse({
+            "responseStatus": 200,
+            "responseData": {"translatedText":
+                             "MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS"},
+        })
+
+    monkeypatch.setattr(_httpx.AsyncClient, "get", get)
+
+    assert await translate.look_up("hamburger", context="I ate one.") is None

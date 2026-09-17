@@ -268,19 +268,20 @@ class CardRepo:
         )
         return (await self.session.scalars(stmt)).one()
 
-    async def lemmas_for(self, user_id: int) -> set[str]:
-        """Every word this learner is already studying.
+    async def lemmas_for(self, user_id: int, *, origin: str | None = None) -> set[str]:
+        """Words this learner is studying, optionally only those they chose.
 
-        The reader needs it to paint saved words red the moment the page opens
-        rather than a flicker later — reopening it and seeing a blank page
-        looks like the app forgot.
+        The reader passes origin="tapped" so that red means "I picked this".
+        Marking every word in the deck also marks the ones the assessor
+        collected by itself, and a reader lighting up words nobody chose reads
+        as the text underlining itself — which is how it was reported.
         """
-        rows = await self.session.scalars(
-            select(Word.lemma).join(UserCard, UserCard.word_id == Word.id).where(
-                UserCard.user_id == user_id
-            )
+        stmt = select(Word.lemma).join(UserCard, UserCard.word_id == Word.id).where(
+            UserCard.user_id == user_id
         )
-        return {lemma.lower() for lemma in rows}
+        if origin is not None:
+            stmt = stmt.where(UserCard.origin == origin)
+        return {lemma.lower() for lemma in await self.session.scalars(stmt)}
 
     async def translated(self, lemma: str) -> Word | None:
         """A word already carrying a Russian translation, if the catalogue has
@@ -332,6 +333,7 @@ class CardRepo:
                 word_id=word.id,
                 due_at=datetime.now(timezone.utc),
                 source_session_id=session_id,
+                origin="tapped",
             )
             .on_conflict_do_nothing(index_elements=[UserCard.user_id, UserCard.word_id])
         )

@@ -439,3 +439,26 @@ async def test_nobody_can_reveal_another_learners_card(reader):
     )
     assert response.status == 403
     assert (await client.post("/api/review/reveal", json={"card": card["id"]})).status == 401
+
+
+def test_the_review_card_records_the_verdict_the_learner_settled_on():
+    """Runs the page's own JavaScript against a tiny DOM.
+
+    The card's rules decide what is written to a learner's schedule — a
+    premature "знаю" must not archive the word, and a correction must be the
+    thing recorded. Asserting that by reading the file would be asserting
+    nothing, so `tests/review_flow.mjs` executes the real <script>.
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+
+    script = Path(__file__).parent / "review_flow.mjs"
+    result = subprocess.run(
+        [node, str(script)], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr or result.stdout

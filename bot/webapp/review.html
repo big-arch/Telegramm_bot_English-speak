@@ -69,6 +69,14 @@
   button:disabled { opacity: .4; }
   #no  { background: var(--dont-bg); color: var(--dont); }
   #yes { background: var(--know-bg); color: var(--know); }
+  /* Filled rather than tinted: once the answer is up, "не знал" is a choice
+     that has been made, and it has to look different from one still on offer. */
+  #no.chosen { background: var(--dont); color: #fff; }
+
+  /* What pressing the green button will actually do. Without it, changing your
+     mind after seeing the answer is a decision taken in the dark. */
+  #verdict { text-align: center; font-size: 13px; color: var(--muted);
+             min-height: 18px; padding: 10px 0 2px; }
 
   footer { text-align: center; font-size: 13px; color: var(--muted); padding-top: 14px; }
   #reset { color: var(--link); cursor: pointer; }
@@ -98,6 +106,8 @@
   </div>
 </main>
 
+<div id="verdict"></div>
+
 <div id="buttons">
   <button id="no">Не знаю</button>
   <button id="yes">Знаю</button>
@@ -120,7 +130,15 @@ let queue = [];
 let index = 0;
 let total = 0;
 let archived = 0;
+
+/* Two pieces of state, and the whole interaction turns on keeping them apart.
+   `revealed` is whether the answer is on screen; `verdict` is what will be
+   recorded when they move on. The first press sets a verdict AND reveals; the
+   answer is then visible while the verdict is still changeable, which is the
+   point — you cannot honestly grade a recall you have not checked, and people
+   overestimate themselves when nothing contradicts them. */
 let revealed = false;
+let verdict = null;      // true = knew it, false = did not
 
 function api(path, options = {}) {
   return fetch(path, {
@@ -141,11 +159,30 @@ function renderArchive() {
   if (reset) reset.onclick = resetArchive;
 }
 
+function paintButtons() {
+  if (!revealed) {
+    $("no").textContent = "Не знаю";
+    $("yes").textContent = "Знаю";
+    $("no").classList.remove("chosen");
+    $("verdict").textContent = "";
+    return;
+  }
+  // Green always moves on once the answer is up; red stays live so a wrong
+  // "знаю" can be taken back, which is the only way the schedule stays honest.
+  $("yes").textContent = "Дальше →";
+  $("no").textContent = "Не знал";
+  $("no").classList.toggle("chosen", verdict === false);
+  $("verdict").textContent = verdict
+    ? "✓ уйдёт в архив"
+    : "↻ вернётся на повтор пораньше";
+}
+
 function show() {
   const card = queue[index];
   if (!card) return finish();
 
   revealed = false;
+  verdict = null;
   $("word").textContent = card.word;
   $("pos").textContent = card.pos || "";
   $("answer").textContent = "";
@@ -154,9 +191,9 @@ function show() {
   $("shot").removeAttribute("src");
   $("left").textContent = `${index + 1} / ${total}`;
   $("fill").style.width = `${(index / total) * 100}%`;
-  $("no").disabled = $("yes").disabled = false;
+  paintButtons();
 
-  // Fetch the next card's picture into the browser cache while they are still
+  // Pull the next card's picture into the browser cache while they are still
   // thinking about this one, so revealing it is instant rather than a wait.
   const next = queue[index + 1];
   if (next?.image) new Image().src = next.image;
@@ -179,6 +216,7 @@ function showPicture(url) {
 function finish() {
   $("live").style.display = "none";
   $("buttons").style.display = "none";
+  $("verdict").textContent = "";
   $("done").style.display = "block";
   $("fill").style.width = "100%";
   $("left").textContent = total ? `${total} / ${total}` : "";
@@ -189,45 +227,56 @@ function finish() {
   renderArchive();
 }
 
-async function answer(known) {
+function reveal(card, knew) {
+  revealed = true;
+  verdict = knew;
+  $("answer").textContent = card.translation || "…";
+  $("answer").classList.add("show");
+  showPicture(card.image);
+  paintButtons();
+  buzz("light");
+
+  // Most cards come from the assessor picking words out of a conversation,
+  // which stores the word and nothing else — so the answer side is often
+  // empty until someone asks for it.
+  if (!card.translation || !card.image) fetchAnswer(card);
+}
+
+function commit() {
   const card = queue[index];
   if (!card) return;
 
-  // "Don't know" shows the answer first and waits: the point of the moment is
-  // seeing the right answer after having tried to recall it.
-  if (!known && !revealed) {
-    revealed = true;
-    $("answer").textContent = card.translation || "…";
-    $("answer").classList.add("show");
-    $("no").textContent = "Дальше";
-    buzz("light");
-    send(card.id, false);
-    showPicture(card.image);
+  if (verdict) archived += 1;
+  send(card.id, !!verdict);
+  buzz(verdict ? "medium" : "rigid");
 
-    // Most cards come from the assessor picking words out of a conversation,
-    // which stores the word and nothing else — so the answer side is often
-    // empty until someone asks for it. That is what "I press don't know and
-    // there's no translation" was.
-    if (!card.translation || !card.image) reveal(card);
-    return;
-  }
-
-  if (known) {
-    archived += 1;
-    send(card.id, true);
-    buzz("medium");
-  }
-
-  $("no").textContent = "Не знаю";
   index += 1;
   show();
   renderArchive();
 }
 
-/* The one call the learner does wait on, because it is the thing they asked
-   for. Everything it finds is written back to the shared catalogue, so a word
-   costs this lookup once and is instant for every review after. */
-async function reveal(card) {
+$("no").onclick = () => {
+  const card = queue[index];
+  if (!card) return;
+  if (!revealed) return reveal(card, false);
+  // Correcting a premature "знаю". Stays on the card: they asked to see the
+  // answer, and moving on the instant they admit the miss would take it away.
+  verdict = false;
+  paintButtons();
+  buzz("light");
+};
+
+$("yes").onclick = () => {
+  const card = queue[index];
+  if (!card) return;
+  if (!revealed) return reveal(card, true);
+  commit();
+};
+
+/* The one call the learner waits on, because it is the thing they asked for.
+   Everything it finds is written back to the shared catalogue, so a word costs
+   this lookup once and is instant for every review after. */
+async function fetchAnswer(card) {
   try {
     const response = await api("/api/review/reveal", {
       method: "POST", body: JSON.stringify({ card: card.id, initData }),
@@ -237,12 +286,14 @@ async function reveal(card) {
 
     card.translation = data.translation || card.translation;
     card.image = data.image || card.image;
-    if (!revealed) return;          // they pressed on while it was in flight
+    if (!revealed || queue[index] !== card) return;   // they pressed on
 
     $("answer").textContent = card.translation || "Перевода нет";
     showPicture(card.image);
   } catch (_) {
-    if (revealed && !card.translation) $("answer").textContent = "Перевода нет";
+    if (revealed && queue[index] === card && !card.translation) {
+      $("answer").textContent = "Перевода нет";
+    }
   }
 }
 
@@ -270,9 +321,6 @@ async function resetArchive() {
     renderArchive();
   }
 }
-
-$("no").onclick = () => answer(false);
-$("yes").onclick = () => answer(true);
 
 (async function start() {
   try {

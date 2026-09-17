@@ -319,3 +319,123 @@ async def test_nobody_can_answer_another_learners_card(reader):
 
     assert (await client.post("/api/review/answer", json={"card": 1})).status == 401
     assert (await client.post("/api/review/reset", json={})).status == 401
+
+
+@pytest.mark.asyncio
+async def test_pressing_dont_know_fills_in_a_missing_translation(reader, monkeypatch):
+    """The reported failure. Cards the assessor collects store the word and
+    nothing else, so the answer side of most of the deck was blank — pressing
+    "не знаю" showed a dash. The answer is fetched when it is first asked for."""
+    from bot.db.models import UserCard, Word
+    from bot.db.repositories import CardRepo
+    from bot.services import images
+
+    client, _turn_id, user_id = reader
+    headers = {"X-Telegram-Init-Data": valid(4242)}
+
+    # A card exactly as add_from_conversation leaves one: no translation.
+    async with sessionmaker() as db:
+        await CardRepo(db).add_from_conversation(
+            user_id=user_id, lemmas=["grocery"], session_id=None, cefr="B1"
+        )
+        await db.commit()
+
+    async def fake_look_up(word, *, context=""):
+        return translate.WordSense(lemma=word, translation_ru="продукты", pos="noun")
+
+    async def fake_find(query, *, width=1280, allow_generation=True):
+        assert allow_generation is False, "flashcards must not invent pictures"
+        return "https://upload.wikimedia.org/groceries.jpg"
+
+    monkeypatch.setattr(translate, "look_up", fake_look_up)
+    monkeypatch.setattr(images, "find", fake_find)
+
+    card = next(
+        c for c in (await (await client.get("/api/review", headers=headers)).json())["cards"]
+        if c["word"] == "grocery"
+    )
+    assert card["translation"] == "" and card["image"] == ""
+
+    revealed = await (
+        await client.post(
+            "/api/review/reveal", json={"card": card["id"]}, headers=headers
+        )
+    ).json()
+    assert revealed["translation"] == "продукты"
+    assert revealed["image"].endswith(".jpg")
+
+    # Written back to the shared catalogue: the next review costs nothing.
+    async with sessionmaker() as db:
+        stored = await db.get(Word, (await db.get(UserCard, card["id"])).word_id)
+        assert stored.translation_ru == "продукты"
+        assert stored.image_url == "https://upload.wikimedia.org/groceries.jpg"
+
+    again = await (await client.get("/api/review", headers=headers)).json()
+    assert next(c for c in again["cards"] if c["word"] == "grocery")["image"]
+
+
+@pytest.mark.asyncio
+async def test_a_word_with_no_picture_is_not_searched_for_twice(reader, monkeypatch):
+    """"However" has no photograph anywhere, and searching the archives again
+    on every single review would be a tax on the most common words."""
+    from bot.db.models import UserCard, Word
+    from bot.db.repositories import CardRepo
+    from bot.services import images
+
+    client, _turn_id, user_id = reader
+    headers = {"X-Telegram-Init-Data": valid(4242)}
+
+    async with sessionmaker() as db:
+        await CardRepo(db).save_tapped(
+            user_id=user_id, lemma="however", translation_ru="однако"
+        )
+        await db.commit()
+
+    searches = []
+
+    async def fake_find(query, *, width=1280, allow_generation=True):
+        searches.append(query)
+        return None
+
+    monkeypatch.setattr(images, "find", fake_find)
+
+    card = next(
+        c for c in (await (await client.get("/api/review", headers=headers)).json())["cards"]
+        if c["word"] == "however"
+    )
+    for _ in range(3):
+        result = await (
+            await client.post(
+                "/api/review/reveal", json={"card": card["id"]}, headers=headers
+            )
+        ).json()
+        assert result == {"translation": "однако", "image": ""}
+
+    assert searches == ["however"], "a fruitless search must be remembered"
+
+    async with sessionmaker() as db:
+        stored = await db.get(Word, (await db.get(UserCard, card["id"])).word_id)
+        # Empty, not NULL: "looked and found nothing" is a different fact from
+        # "nobody has looked".
+        assert stored.image_url == ""
+
+
+@pytest.mark.asyncio
+async def test_nobody_can_reveal_another_learners_card(reader):
+    client, _turn_id, user_id = reader
+
+    async with sessionmaker() as db:
+        await _stock(db, user_id, ["stubborn"])
+
+    card = (
+        await (
+            await client.get("/api/review", headers={"X-Telegram-Init-Data": valid(4242)})
+        ).json()
+    )["cards"][0]
+
+    response = await client.post(
+        "/api/review/reveal", json={"card": card["id"]},
+        headers={"X-Telegram-Init-Data": valid(777)},
+    )
+    assert response.status == 403
+    assert (await client.post("/api/review/reveal", json={"card": card["id"]})).status == 401

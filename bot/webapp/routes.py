@@ -21,9 +21,9 @@ from aiohttp import web
 from sqlalchemy import select
 
 from bot.db.base import sessionmaker
-from bot.db.models import Turn, User, UserCard
+from bot.db.models import Turn, User, UserCard, Word
 from bot.db.repositories import CardRepo
-from bot.services import srs, translate
+from bot.services import images, srs, translate
 from bot.webapp.auth import InvalidInitData, telegram_id
 
 logger = logging.getLogger(__name__)
@@ -195,12 +195,62 @@ async def review_queue(request: web.Request) -> web.Response:
                 "id": card.id,
                 "word": word.lemma,
                 "translation": word.translation_ru or "",
+                "image": word.image_url or "",
                 "pos": word.pos if word.pos != "unknown" else "",
             }
             for card, word in queue
         ],
         "archived": archived,
     })
+
+
+async def review_reveal(request: web.Request) -> web.Response:
+    """The answer side of a card: translation, and a picture if one exists.
+
+    Filled in on demand rather than up front. Most cards arrive from the
+    assessor picking words out of a conversation, which stores the word and
+    nothing else — so the deck is full of entries whose answer side was blank,
+    which is what "I press don't know and there's no translation" was. Doing
+    the work here means it costs one lookup the first time a word is missed and
+    nothing ever again, instead of translating a hundred cards nobody opens.
+    """
+    try:
+        body = await request.json()
+    except ValueError:
+        raise web.HTTPBadRequest(text="expected json")
+
+    try:
+        card_id = int(body.get("card", 0))
+    except (TypeError, ValueError):
+        raise web.HTTPBadRequest(text="card must be a number")
+
+    async with sessionmaker() as db:
+        user = await _learner(request, db, body)
+        card = await db.get(UserCard, card_id)
+        if card is None or card.user_id != user.id:
+            raise web.HTTPForbidden(text="not your card")
+
+        word = await db.get(Word, card.word_id)
+        if word is None:
+            raise web.HTTPForbidden(text="not your card")
+
+        if not word.translation_ru:
+            sense = await translate.look_up(word.lemma)
+            if sense is not None:
+                word.translation_ru = sense.translation_ru[:128]
+
+        if word.image_url is None:
+            # Generation is off for flashcards on purpose: a drawn picture of
+            # "however" is a confident picture of nothing, and a wrong
+            # illustration on a card you are memorising is worse than none —
+            # it is the thing you end up remembering.
+            found = await images.find(word.lemma, width=640, allow_generation=False)
+            word.image_url = (found or "")[:500]
+
+        translation, image = word.translation_ru or "", word.image_url or ""
+        await db.commit()
+
+    return web.json_response({"translation": translation, "image": image})
 
 
 async def review_answer(request: web.Request) -> web.Response:
@@ -278,5 +328,6 @@ def attach(app: web.Application, *, bot_token: str) -> None:
 
     app.router.add_get("/review", review_page)
     app.router.add_get("/api/review", review_queue)
+    app.router.add_post("/api/review/reveal", review_reveal)
     app.router.add_post("/api/review/answer", review_answer)
     app.router.add_post("/api/review/reset", review_reset)

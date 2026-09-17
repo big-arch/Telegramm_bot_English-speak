@@ -409,7 +409,9 @@ def _client() -> httpx.AsyncClient:
     )
 
 
-async def look_up(query: str, *, width: int = 1280) -> tuple[str | None, list[str]]:
+async def look_up(
+    query: str, *, width: int = 1280, allow_generation: bool = True
+) -> tuple[str | None, list[str]]:
     """Find a picture and say how it went. `find` is the ordinary way in.
 
     The notes are the point of this signature: this module runs somewhere with
@@ -431,17 +433,27 @@ async def look_up(query: str, *, width: int = 1280) -> tuple[str | None, list[st
             if url is not None:
                 return url, notes
 
+        if not allow_generation:
+            # A flashcard is not a conversation. Drawing "however" produces a
+            # confident picture of nothing, and a wrong illustration is worse
+            # for a word you are trying to memorise than no illustration —
+            # it is the thing you will remember.
+            notes.append("generation not allowed here")
+            return None, notes
+
         url, detail = await _generate(http, query, width)
         notes.append(f"generated: {detail}")
         return url, notes
 
 
-async def find(query: str, *, width: int = 1280) -> str | None:
+async def find(
+    query: str, *, width: int = 1280, allow_generation: bool = True
+) -> str | None:
     """Return a URL for a picture of `query`, or None.
 
     Never raises: a missing picture should cost the learner nothing but the
     picture. The conversation continues either way.
     """
-    url, notes = await look_up(query, width=width)
+    url, notes = await look_up(query, width=width, allow_generation=allow_generation)
     logger.info("photo lookup %r -> %s | %s", query, url, "; ".join(notes))
     return url

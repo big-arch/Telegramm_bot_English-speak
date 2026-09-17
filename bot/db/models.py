@@ -217,6 +217,12 @@ class Word(Base):
     ipa: Mapped[str | None] = mapped_column(String(64))
     audio_file_id: Mapped[str | None] = mapped_column(String(160))
 
+    # A picture for the review card. Three states, not two: NULL means nobody
+    # has looked yet, an empty string means we looked and the archives had
+    # nothing, and a URL is a URL. Without the middle state every review of an
+    # unillustratable word would search the whole internet again.
+    image_url: Mapped[str | None] = mapped_column(String(500))
+
     # record (noun) and record (verb) differ in stress, level and meaning.
     __table_args__ = (UniqueConstraint("lemma", "pos", name="uq_word_lemma_pos"),)
 

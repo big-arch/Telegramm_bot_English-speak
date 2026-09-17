@@ -51,6 +51,14 @@
             transition: opacity .2s, transform .2s; min-height: 34px; }
   #answer.show { opacity: 1; transform: none; }
 
+  /* The picture comes in under the translation, and only once it has loaded —
+     a box that pops open empty and fills in later moves the word off the
+     middle of the screen at the exact moment they are reading it. */
+  #shot { max-width: 100%; max-height: 34vh; border-radius: 14px; display: none;
+          margin: 4px auto 0; object-fit: cover; }
+  #shot.show { display: block; animation: rise .22s ease both; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
   #buttons { display: flex; gap: 12px; }
   button {
     flex: 1; font: inherit; font-size: 17px; font-weight: 600;
@@ -82,6 +90,7 @@
     <div id="word">…</div>
     <div id="pos"></div>
     <div id="answer"></div>
+    <img id="shot" alt="">
   </div>
   <div id="done">
     <h2 id="done-title">Готово 👌</h2>
@@ -141,9 +150,30 @@ function show() {
   $("pos").textContent = card.pos || "";
   $("answer").textContent = "";
   $("answer").classList.remove("show");
+  $("shot").classList.remove("show");
+  $("shot").removeAttribute("src");
   $("left").textContent = `${index + 1} / ${total}`;
   $("fill").style.width = `${(index / total) * 100}%`;
   $("no").disabled = $("yes").disabled = false;
+
+  // Fetch the next card's picture into the browser cache while they are still
+  // thinking about this one, so revealing it is instant rather than a wait.
+  const next = queue[index + 1];
+  if (next?.image) new Image().src = next.image;
+}
+
+function showPicture(url) {
+  if (!url) return;
+  const shot = $("shot");
+  // Only shown once decoded: a box that appears empty and fills in later
+  // shoves the word off the middle of the screen while they are reading it.
+  const probe = new Image();
+  probe.onload = () => {
+    if (!revealed) return;          // they moved on; do not flash a stale photo
+    shot.src = url;
+    shot.classList.add("show");
+  };
+  probe.src = url;
 }
 
 function finish() {
@@ -163,15 +193,22 @@ async function answer(known) {
   const card = queue[index];
   if (!card) return;
 
-  // "Don't know" shows the translation first and waits: the point of the
-  // moment is seeing the right answer after having tried to recall it.
+  // "Don't know" shows the answer first and waits: the point of the moment is
+  // seeing the right answer after having tried to recall it.
   if (!known && !revealed) {
     revealed = true;
-    $("answer").textContent = card.translation || "—";
+    $("answer").textContent = card.translation || "…";
     $("answer").classList.add("show");
     $("no").textContent = "Дальше";
     buzz("light");
     send(card.id, false);
+    showPicture(card.image);
+
+    // Most cards come from the assessor picking words out of a conversation,
+    // which stores the word and nothing else — so the answer side is often
+    // empty until someone asks for it. That is what "I press don't know and
+    // there's no translation" was.
+    if (!card.translation || !card.image) reveal(card);
     return;
   }
 
@@ -185,6 +222,28 @@ async function answer(known) {
   index += 1;
   show();
   renderArchive();
+}
+
+/* The one call the learner does wait on, because it is the thing they asked
+   for. Everything it finds is written back to the shared catalogue, so a word
+   costs this lookup once and is instant for every review after. */
+async function reveal(card) {
+  try {
+    const response = await api("/api/review/reveal", {
+      method: "POST", body: JSON.stringify({ card: card.id, initData }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+
+    card.translation = data.translation || card.translation;
+    card.image = data.image || card.image;
+    if (!revealed) return;          // they pressed on while it was in flight
+
+    $("answer").textContent = card.translation || "Перевода нет";
+    showPicture(card.image);
+  } catch (_) {
+    if (revealed && !card.translation) $("answer").textContent = "Перевода нет";
+  }
 }
 
 /* Fire-and-forget on purpose: the learner should never wait on the network

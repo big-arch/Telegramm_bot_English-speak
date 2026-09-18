@@ -21,8 +21,9 @@ from aiohttp import web
 from sqlalchemy import select
 
 from bot.db.base import sessionmaker
-from bot.db.models import Turn, User, UserCard, Word
+from bot.db.models import Turn, UsageDay, User, UserCard, Word
 from bot.db.repositories import CardRepo
+from bot.db.upsert import insert
 from bot.services import images, srs, translate
 from bot.webapp.auth import InvalidInitData, telegram_id
 
@@ -59,6 +60,30 @@ async def _learner(request: web.Request, db, body: dict | None = None) -> User:
     return user
 
 
+async def _note_open(db, user: User, field: str) -> None:
+    """Record that someone opened one of the Mini Apps.
+
+    Counted at the moment the page asks for its data, which is the honest
+    definition of an open: the page rendered and wanted something. Failures are
+    swallowed — a counter must never be the reason a learner's app does not
+    load.
+    """
+    try:
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        stmt = (
+            insert(UsageDay)
+            .values(user_id=user.id, day=day, **{field: 1})
+            .on_conflict_do_update(
+                index_elements=[UsageDay.user_id, UsageDay.day],
+                set_={field: getattr(UsageDay, field) + 1},
+            )
+        )
+        await db.execute(stmt)
+        await db.commit()
+    except Exception:  # noqa: BLE001 - analytics never break the product
+        logger.exception("could not record a %s open", field)
+
+
 async def page(request: web.Request) -> web.Response:
     """The reader itself. Static — everything it needs it asks for."""
     return web.Response(
@@ -88,6 +113,7 @@ async def read_turn(request: web.Request) -> web.Response:
             raise web.HTTPForbidden(text=FORBIDDEN)
 
         known = await CardRepo(db).lemmas_for(user.id, origin="tapped")
+        await _note_open(db, user, "reader_opens")
 
     return web.json_response(
         {"text": turn.assistant_text or "", "saved": sorted(known)}
@@ -188,6 +214,7 @@ async def review_queue(request: web.Request) -> web.Response:
         repo = CardRepo(db)
         queue = await repo.study_queue(user.id)
         archived = await repo.archived_count(user.id)
+        await _note_open(db, user, "review_opens")
 
     return web.json_response({
         "cards": [

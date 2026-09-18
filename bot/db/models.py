@@ -333,4 +333,11 @@ class UsageDay(Base):
     llm_input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     llm_output_tokens: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Mini App opens. Counted here rather than inferred from taps and answers,
+    # because the interesting number is how many people opened a thing and did
+    # nothing — that gap is where a feature is failing, and an inferred count
+    # cannot see it by construction.
+    reader_opens: Mapped[int] = mapped_column(Integer, default=0)
+    review_opens: Mapped[int] = mapped_column(Integer, default=0)
+
     __table_args__ = (UniqueConstraint("user_id", "day", name="uq_usage_user_day"),)

@@ -565,3 +565,168 @@ async def streak_days(session: AsyncSession, user_id: int, tz_name: str = "UTC")
         else:
             break
     return streak
+
+
+@dataclass
+class StatsRepo:
+    """Numbers about the product, for whoever built it.
+
+    Deliberately aggregate only. Nothing here returns a message, a transcript
+    or a name — the operator needs to know whether the thing works, not what
+    anyone said to it, and building the second while asking for the first is
+    how a learning product quietly becomes surveillance.
+    """
+
+    session: AsyncSession
+
+    async def _count(self, stmt) -> int:
+        return (await self.session.scalar(stmt)) or 0
+
+    async def overview(self) -> dict:
+        now = datetime.now(timezone.utc)
+        day = now - timedelta(days=1)
+        week = now - timedelta(days=7)
+        month = now - timedelta(days=30)
+
+        users = select(func.count()).select_from(User)
+        total = await self._count(users)
+
+        # "Opened the app" is people who pressed /start. Everything after this
+        # is about how many of them the product actually kept.
+        new_today = await self._count(users.where(User.created_at >= day))
+        new_week = await self._count(users.where(User.created_at >= week))
+
+        active_today = await self._count(users.where(User.last_seen_at >= day))
+        active_week = await self._count(users.where(User.last_seen_at >= week))
+        active_month = await self._count(users.where(User.last_seen_at >= month))
+
+        blocked = await self._count(users.where(User.is_active.is_(False)))
+
+        # The only number that says whether this is a product or a demo: people
+        # who said something, not people who arrived and looked around.
+        spoke = await self._count(
+            select(func.count(func.distinct(Turn.user_id))).select_from(Turn)
+        )
+
+        # ...and of those, the ones who came back on a different day. Second-day
+        # return is the number every consumer product lives or dies on, and it
+        # is invisible in a total-installs figure.
+        days_per_user = (
+            select(Turn.user_id, func.count(func.distinct(func.date(Turn.created_at))).label("days"))
+            .group_by(Turn.user_id)
+            .subquery()
+        )
+        returned = await self._count(
+            select(func.count()).select_from(days_per_user).where(days_per_user.c.days >= 2)
+        )
+
+        conversations = await self._count(select(func.count()).select_from(Session))
+        finished = await self._count(
+            select(func.count()).select_from(Session).where(Session.finished_at.is_not(None))
+        )
+
+        turns = select(func.count()).select_from(Turn)
+        voice = await self._count(turns.where(Turn.modality == "voice"))
+        text = await self._count(turns.where(Turn.modality == "text"))
+        photos = await self._count(turns.where(Turn.modality == "photo"))
+
+        opens = await self.session.execute(
+            select(
+                func.coalesce(func.sum(UsageDay.reader_opens), 0),
+                func.coalesce(func.sum(UsageDay.review_opens), 0),
+            )
+        )
+        reader_opens, review_opens = opens.one()
+
+        cards = await self._count(select(func.count()).select_from(UserCard))
+        tapped = await self._count(
+            select(func.count()).select_from(UserCard).where(UserCard.origin == "tapped")
+        )
+
+        tokens = await self.session.execute(
+            select(
+                func.coalesce(func.sum(UsageDay.llm_input_tokens), 0),
+                func.coalesce(func.sum(UsageDay.llm_output_tokens), 0),
+                func.coalesce(func.sum(UsageDay.audio_seconds_in), 0.0),
+            )
+        )
+        llm_in, llm_out, audio_seconds = tokens.one()
+
+        return {
+            "total": total,
+            "new_today": new_today,
+            "new_week": new_week,
+            "active_today": active_today,
+            "active_week": active_week,
+            "active_month": active_month,
+            "blocked": blocked,
+            "spoke": spoke,
+            "returned": returned,
+            "conversations": conversations,
+            "finished": finished,
+            "voice": voice,
+            "text": text,
+            "photos": photos,
+            "reader_opens": int(reader_opens),
+            "review_opens": int(review_opens),
+            "cards": cards,
+            "tapped": tapped,
+            "llm_in": int(llm_in),
+            "llm_out": int(llm_out),
+            "audio_minutes": float(audio_seconds) / 60.0,
+        }
+
+    async def funnel(self) -> list[tuple[str, int]]:
+        """Where people stop, in order.
+
+        More useful than any single total: a step that loses most of the
+        people who reached it is a bug with a location.
+        """
+        users = select(func.count()).select_from(User)
+        return [
+            ("Нажали /start", await self._count(users)),
+            ("Выбрали уровень", await self._count(users.where(User.goal.is_not(None)))),
+            (
+                "Сказали хоть что-то",
+                await self._count(
+                    select(func.count(func.distinct(Turn.user_id))).select_from(Turn)
+                ),
+            ),
+            (
+                "Записали голосовое",
+                await self._count(
+                    select(func.count(func.distinct(Turn.user_id)))
+                    .select_from(Turn)
+                    .where(Turn.modality == "voice")
+                ),
+            ),
+            (
+                "Дошли до /finish",
+                await self._count(
+                    select(func.count(func.distinct(Session.user_id)))
+                    .select_from(Session)
+                    .where(Session.finished_at.is_not(None))
+                ),
+            ),
+            (
+                "Учат слова",
+                await self._count(
+                    select(func.count(func.distinct(UserCard.user_id))).select_from(UserCard)
+                ),
+            ),
+        ]
+
+    async def daily(self, days: int = 14) -> list[tuple[str, int, int]]:
+        """(day, people who spoke, turns) — newest last, for a small chart."""
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        rows = await self.session.execute(
+            select(
+                func.date(Turn.created_at).label("day"),
+                func.count(func.distinct(Turn.user_id)),
+                func.count(),
+            )
+            .where(Turn.created_at >= since)
+            .group_by("day")
+            .order_by("day")
+        )
+        return [(str(day), people, count) for day, people, count in rows.all()]

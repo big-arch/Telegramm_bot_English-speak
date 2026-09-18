@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     # Free tiers have daily ceilings. This keeps one enthusiastic user from
     # spending the whole day's quota before lunch.
     free_daily_turns: int = 40
+
+    # Appended to the crisis message. The code ships no helpline number it
+    # cannot vouch for — a wrong one handed to someone in that state is worse
+    # than none — so the right local line goes here, where whoever runs this
+    # bot knows their users' country and this repository does not.
+    # Example: CRISIS_CONTACT=Телефон доверия: 8-800-2000-122 (круглосуточно)
+    crisis_contact: str | None = None
     max_voice_seconds: int = 120
 
     @field_validator("db_dsn", mode="before")

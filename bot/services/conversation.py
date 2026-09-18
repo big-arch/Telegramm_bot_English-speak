@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from bot import personas as personas_mod
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import CardRepo, ErrorRepo, SessionRepo, TurnRepo, UsageRepo
-from bot.services import images, llm, vision
+from bot.services import images, llm, vision, wellbeing
 from bot.services.backends import Usage
 from bot.services.fluency import FluencyMetrics
 
@@ -87,6 +87,10 @@ async def process_turn(
     recent = await error_repo.recent_categories(user.id)
     weak = [category for category, _ in recent.most_common(3)]
 
+    # How they are, not just what they said. A partner who answers "I lost my
+    # job" with a grammar note is the reason people stop opening the app.
+    care = wellbeing.guidance(wellbeing.read(text)) if not is_photo else ""
+
     reply_task = llm.tutor_reply(
         history=history,
         persona_character=persona.character,
@@ -96,6 +100,7 @@ async def process_turn(
         memory=user.memory_summary,
         weak_categories=weak,
         topic_goal=topic.goal_prompt if topic else None,
+        care=care,
     )
     if is_photo:
         # Nothing the learner said, so nothing to assess. Running the assessor

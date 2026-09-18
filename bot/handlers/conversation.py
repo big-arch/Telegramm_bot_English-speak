@@ -25,10 +25,11 @@ from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
 from bot.keyboards.common import reader_kb, topics_kb
 from bot.services import conversation as convo_service
-from bot.services import feedback, fluency, images, llm, stt, vision
+from bot.services import feedback, fluency, images, llm, stt, vision, wellbeing
 from bot.services.speak import send_spoken
 from bot.texts import (
     CHOOSE_TOPIC,
+    CRISIS_HELP,
     DAILY_LIMIT_REACHED,
     DEBRIEF_HEADER,
     ERROR_GENERIC,
@@ -185,6 +186,30 @@ async def _reply(
     )
 
 
+async def _crisis_handled(message: Message, user: User, text: str) -> bool:
+    """Stop everything if this is not a language lesson any more.
+
+    Checked in code rather than left to the model, and checked before the model
+    is called at all. Everything else in this project that had to work was
+    eventually moved out of the prompt for the same reason — a free-tier model
+    dropping an instruction is a bug everywhere and unacceptable here.
+
+    The reply is in Russian because it has to land without being parsed, and it
+    names no helpline this repository cannot vouch for: a wrong number given to
+    someone in that state is worse than none. CRISIS_CONTACT adds the right
+    local one.
+    """
+    if not wellbeing.read(text).crisis:
+        return False
+
+    logger.warning("crisis language from user %s — lesson stopped", user.tg_id)
+    body = CRISIS_HELP
+    if settings.crisis_contact:
+        body = f"{body}\n\n{settings.crisis_contact}"
+    await message.answer(body)
+    return True
+
+
 # --------------------------------------------------------------------------- #
 # Voice — the main path
 # --------------------------------------------------------------------------- #
@@ -227,6 +252,10 @@ async def on_voice(message: Message, session: DbSession, user: User, bot: Bot) -
     # Show the transcript straight away: it is the fastest, cheapest feedback
     # there is, and it tells the learner what was actually heard.
     await status.edit_text(f"🗣 <i>{transcript.text}</i>\n\n{THINKING}")
+
+    if await _crisis_handled(message, user, transcript.text):
+        await status.edit_text(f"🗣 <i>{transcript.text}</i>")
+        return
 
     convo = await _ensure_session(session, user)
     topic = await _topic_of(session, convo)
@@ -396,6 +425,9 @@ async def on_wrong_media(message: Message) -> None:
 async def on_text(message: Message, session: DbSession, user: User, bot: Bot) -> None:
     text = (message.text or "").strip()
     if not text:
+        return
+
+    if await _crisis_handled(message, user, text):
         return
 
     status = await message.answer(THINKING)

@@ -996,3 +996,59 @@ async def test_the_dictionarys_own_complaints_are_not_offered_as_translations(
     monkeypatch.setattr(_httpx.AsyncClient, "get", get)
 
     assert await translate.look_up("hamburger", context="I ate one.") is None
+
+
+@pytest.mark.asyncio
+async def test_a_hard_day_reaches_the_partner_as_something_to_answer(
+    db, fixtures, monkeypatch
+):
+    """The signal has to survive the whole pipeline, not just exist in a module.
+
+    A partner told nothing about how the learner is doing will answer "I lost my
+    job" with a follow-up about the past simple, which is the single most
+    reliable way to make someone stop opening the app.
+    """
+    user, topic, convo = fixtures
+    stub = StubBackend()
+    monkeypatch.setattr(llm, "get_backend", lambda: stub)
+
+    await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic,
+        text="I lost my job last week and I feel like a failure",
+        modality="voice",
+    )
+    assert "THIS TURN" in stub.last_system
+    assert "Answer the person before you answer the English" in stub.last_system
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_turn_carries_no_extra_instruction(db, fixtures, monkeypatch):
+    """Every instruction added is another one a free-tier model can drop, and
+    most turns are just somebody talking about their weekend."""
+    user, topic, convo = fixtures
+    stub = StubBackend()
+    monkeypatch.setattr(llm, "get_backend", lambda: stub)
+
+    await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic,
+        text="I went to Prague with my brother in May",
+        modality="voice",
+    )
+    assert "THIS TURN" not in stub.last_system
+
+
+@pytest.mark.asyncio
+async def test_a_photo_turn_is_not_read_for_feelings(db, fixtures, monkeypatch):
+    """The text of a photo turn is the model's own description of the picture.
+    Reading it for distress would be reading the bot's mood, not the learner's."""
+    user, topic, convo = fixtures
+    stub = StubBackend()
+    monkeypatch.setattr(llm, "get_backend", lambda: stub)
+
+    await convo_service.process_turn(
+        db, user=user, convo=convo, topic=topic,
+        text="I feel so lonely and hopeless",   # would fire on an ordinary turn
+        modality="photo",
+        photo_description="A grey street in the rain.",
+    )
+    assert "THIS TURN" not in stub.last_system

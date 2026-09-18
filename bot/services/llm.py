@@ -68,6 +68,7 @@ async def tutor_reply(
     memory: str | None = None,
     weak_categories: list[str] | None = None,
     topic_goal: str | None = None,
+    care: str = "",
 ) -> tuple[str, Usage]:
     system = prompts.tutor_system(
         persona_character=persona_character,
@@ -77,6 +78,7 @@ async def tutor_reply(
         memory=memory,
         weak_categories=weak_categories or [],
         topic_goal=topic_goal,
+        care=care,
     )
     return await get_backend().complete(system=system, messages=history, max_tokens=400)
 

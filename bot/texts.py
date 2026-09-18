@@ -26,6 +26,9 @@ WELCOME = (
     "пришлёт. Чего нет в архивах — нарисует.\n"
     "📸 <b>Смотрит твои фото.</b> Пришли снимок — обсудим то, что на нём. "
     "Описывать картинку это отдельный навык, его проверяют на экзаменах.\n"
+    "💚 <b>Слушает не только английский.</b> Плохая неделя, страшно говорить, "
+    "бросить хочется — об этом можно. Собеседник ответит человеку, а не "
+    "ученику. (Но он не психолог и не врач и честно об этом скажет.)\n"
     "🔁 <b>Не даёт забыть.</b> /review открывает карточки: знаю — слово в "
     "архив, не знаю — покажет перевод и вернёт пораньше. Архив можно "
     "сбросить, и всё вернётся.\n\n"
@@ -101,6 +104,26 @@ PHOTO_NOT_SUPPORTED = (
 PHOTO_NOT_FOUND = (
     "<i>(I couldn't find a good photo of that one — describe it to me instead? "
     "What do you picture?)</i>"
+)
+
+# The one message that is never about English, and the one place where dropping
+# out of the lesson entirely is the correct behaviour. In Russian on purpose: it
+# has to land without being parsed.
+#
+# No hotline number is written here that could not be verified. 112 is the
+# emergency number across Russia and the EU and is safe to give; a wrong
+# helpline number handed to someone in this state is worse than none, so the
+# rest points at people rather than at digits. Set CRISIS_CONTACT to add the
+# right local line — that is the one thing the person running this bot knows
+# and this file cannot.
+CRISIS_HELP = (
+    "Подожди, английский сейчас совсем не важен.\n\n"
+    "То, что ты написал, звучит тяжело, и я — программа. Я не могу быть тем, "
+    "кто тебе сейчас нужен, и не буду делать вид.\n\n"
+    "<b>Пожалуйста, скажи это живому человеку.</b> Тому, кому доверяешь: другу, "
+    "близкому, врачу. Если опасность прямо сейчас — <b>112</b>.\n\n"
+    "Если станет чуть легче и захочешь просто поговорить — я здесь. "
+    "Без урока, без исправлений."
 )
 
 PHOTO_TOO_BIG = (

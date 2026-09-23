@@ -16,9 +16,10 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 
 from bot import personas as personas_mod
+from bot import scenarios as scenarios_mod
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import CardRepo, ErrorRepo, SessionRepo, TurnRepo, UsageRepo
-from bot.services import images, llm, vision, wellbeing
+from bot.services import images, llm, roleplay, vision, wellbeing
 from bot.services.backends import Usage
 from bot.services.fluency import FluencyMetrics
 
@@ -35,6 +36,9 @@ class TurnResult:
     # What the tutor wants to show, if anything. Resolved to a picture by the
     # handler, which owns sending.
     photo_query: str | None = None
+    # Role-play: goals this turn achieved, and whether that finished the scene.
+    goals_met: tuple[int, ...] = ()
+    scenario_complete: bool = False
 
 
 def _build_history(convo: Session, past: list[Turn], current_text: str) -> list[dict]:
@@ -91,6 +95,14 @@ async def process_turn(
     # job" with a grammar note is the reason people stop opening the app.
     care = wellbeing.guidance(wellbeing.read(text)) if not is_photo else ""
 
+    # A scene replaces the topic's goal: the partner is told who to be and
+    # what the learner still has to manage, and the checker runs beside it.
+    scenario = scenarios_mod.get(convo.scenario_key)
+    done = scenarios_mod.parse_done(convo.goals_done)
+    goal = roleplay.partner_brief(scenario, done) if scenario else (
+        topic.goal_prompt if topic else None
+    )
+
     reply_task = llm.tutor_reply(
         history=history,
         persona_character=persona.character,
@@ -99,14 +111,28 @@ async def process_turn(
         correction_style=user.correction_style,
         memory=user.memory_summary,
         weak_categories=weak,
-        topic_goal=topic.goal_prompt if topic else None,
+        topic_goal=goal,
         care=care,
     )
+
+    async def _no_goals() -> set[int]:
+        return set()
+
+    goals_task = (
+        roleplay.check_goals(
+            scenario, done,
+            partner_line=(past[-1].assistant_text if past else convo.opening_line) or "",
+            utterance=text,
+        )
+        if scenario and not is_photo
+        else _no_goals()
+    )
+
     if is_photo:
         # Nothing the learner said, so nothing to assess. Running the assessor
         # on the model's own description would manufacture errors they never
         # made and put them in their history.
-        reply, reply_usage = await reply_task
+        (reply, reply_usage), newly_met = await asyncio.gather(reply_task, goals_task)
         assessment, assess_usage = None, Usage()
     else:
         assess_task = llm.assess(
@@ -115,9 +141,15 @@ async def process_turn(
             modality=modality,
             recent_categories=weak,
         )
-        (reply, reply_usage), (assessment, assess_usage) = await asyncio.gather(
-            reply_task, assess_task
+        (reply, reply_usage), (assessment, assess_usage), newly_met = await asyncio.gather(
+            reply_task, assess_task, goals_task
         )
+
+    scenario_complete = False
+    if scenario and newly_met:
+        done |= newly_met
+        convo.goals_done = scenarios_mod.format_done(done)
+        scenario_complete = len(done) >= len(scenario.goals)
 
     # Strip the show-marker before anything stores or speaks the reply: a
     # synthesiser reading "bracket show colon brooklyn bridge" out loud is
@@ -204,7 +236,12 @@ async def process_turn(
     await db.commit()
 
     return TurnResult(
-        reply=reply, turn=turn, assessment=assessment, photo_query=photo_query
+        reply=reply,
+        turn=turn,
+        assessment=assessment,
+        photo_query=photo_query,
+        goals_met=tuple(sorted(newly_met)),
+        scenario_complete=scenario_complete,
     )
 
 

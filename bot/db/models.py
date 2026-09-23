@@ -117,6 +117,13 @@ class Session(Base):
     turn_count: Mapped[int] = mapped_column(Integer, default=0)
     voice_turn_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Role-play. `goals_done` is a comma-separated list of goal indices — three
+    # small integers do not deserve a table — and `card_message_id` is the
+    # checklist message, kept so it can be edited in place as goals are met.
+    scenario_key: Mapped[str | None] = mapped_column(String(32))
+    goals_done: Mapped[str | None] = mapped_column(String(32))
+    card_message_id: Mapped[int | None] = mapped_column(BigInteger)
+
     # Filled at /finish by the debrief step.
     summary: Mapped[str | None] = mapped_column(Text)
     accuracy: Mapped[float | None] = mapped_column(Float)

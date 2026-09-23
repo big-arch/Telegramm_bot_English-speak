@@ -4,10 +4,13 @@ from aiogram.types import InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import personas as personas_mod
+from bot import scenarios as scenarios_mod
 from bot.config import settings
 from bot.callbacks import (
+    FinishCB,
     GoalCB,
     HintCB,
+    ScenarioCB,
     LevelCB,
     PersonaCB,
     ReviewCB,
@@ -88,6 +91,9 @@ def goal_kb() -> InlineKeyboardMarkup:
 
 def topics_kb(topics: list[Topic]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    # Scenes first: a task with a finish line is the better session for most
+    # people most days, and a button below eight topics is a button nobody sees.
+    kb.button(text="🎭 Ролевые сценарии — с задачей", callback_data=ScenarioCB(key="menu"))
     for topic in topics:
         kb.button(
             text=f"{topic.emoji} {topic.title_ru}",
@@ -133,4 +139,25 @@ def review_kb(card_id: int) -> InlineKeyboardMarkup:
 def show_answer_kb(card_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="Показать ответ", callback_data=ReviewCB(card_id=card_id, grade=0))
+    return kb.as_markup()
+
+
+def scenarios_kb(level: str) -> InlineKeyboardMarkup:
+    """Every scene, the ones pitched at this level first and starred."""
+    kb = InlineKeyboardBuilder()
+    for scenario in scenarios_mod.for_level(level):
+        star = "⭐ " if level in scenario.levels else ""
+        kb.button(
+            text=f"{star}{scenario.emoji} {scenario.title_ru}",
+            callback_data=ScenarioCB(key=scenario.key),
+        )
+    kb.adjust(2)
+    return kb.as_markup()
+
+
+def scenario_done_kb(session_id: int) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🏁 Разбор", callback_data=FinishCB(session_id=session_id))
+    kb.button(text="🎭 Ещё сценарий", callback_data=ScenarioCB(key="menu"))
+    kb.adjust(2)
     return kb.as_markup()

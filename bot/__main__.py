@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 COMMANDS = [
     BotCommand(command="talk", description="Начать разговор"),
+    BotCommand(command="roleplay", description="Ролевые сценарии с задачей"),
     BotCommand(command="finish", description="Закончить и получить разбор"),
     BotCommand(command="review", description="Повторить слова"),
     BotCommand(command="photo", description="Показать фото: /photo hamburger"),

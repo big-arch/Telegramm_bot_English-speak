@@ -48,3 +48,11 @@ class RetryCB(CallbackData, prefix="rty"):
 
 class HintCB(CallbackData, prefix="hint"):
     turn_id: int
+
+
+class ScenarioCB(CallbackData, prefix="scn"):
+    key: str  # a scenario key, or "menu" for the list itself
+
+
+class FinishCB(CallbackData, prefix="fin"):
+    session_id: int

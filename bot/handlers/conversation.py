@@ -20,13 +20,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 
 from bot import personas as personas_mod
-from bot.callbacks import HintCB, TopicCB
+from bot.callbacks import FinishCB, HintCB, TopicCB
 from bot.config import settings
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
 from bot.keyboards.common import opening_kb, reader_kb, topics_kb
 from bot.services import conversation as convo_service
 from bot.services import feedback, fluency, hints, images, llm, portraits, stt, vision, wellbeing
+from bot.handlers import roleplay
 from bot.services.speak import send_spoken
 from bot.texts import (
     CHOOSE_TOPIC,
@@ -355,6 +356,10 @@ async def on_voice(message: Message, session: DbSession, user: User, bot: Bot) -
         bot, session, chat_id=message.chat.id, convo=convo, user=user,
         text=result.reply, photo_query=result.photo_query, turn_id=result.turn.id,
     )
+    await roleplay.after_turn(
+        bot, chat_id=message.chat.id, convo=convo, learner_message_id=message.message_id,
+        goals_met=result.goals_met, complete=result.scenario_complete,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -482,6 +487,10 @@ async def _talk_about_photo(
         bot, session, chat_id=message.chat.id, convo=convo, user=user,
         text=result.reply, photo_query=result.photo_query, turn_id=result.turn.id,
     )
+    await roleplay.after_turn(
+        bot, chat_id=message.chat.id, convo=convo, learner_message_id=message.message_id,
+        goals_met=result.goals_met, complete=result.scenario_complete,
+    )
 
 
 @router.message(F.audio | F.video_note | F.document)
@@ -534,6 +543,10 @@ async def on_text(message: Message, session: DbSession, user: User, bot: Bot) ->
         bot, session, chat_id=message.chat.id, convo=convo, user=user,
         text=result.reply, photo_query=result.photo_query, turn_id=result.turn.id,
     )
+    await roleplay.after_turn(
+        bot, chat_id=message.chat.id, convo=convo, learner_message_id=message.message_id,
+        goals_met=result.goals_met, complete=result.scenario_complete,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -554,13 +567,40 @@ def _metrics_of(turn: Turn) -> fluency.FluencyMetrics:
     )
 
 
+@router.callback_query(FinishCB.filter())
+async def finish_from_button(
+    query: CallbackQuery, callback_data: FinishCB, session: DbSession, user: User, bot: Bot
+) -> None:
+    """The "Разбор" button under a finished scene."""
+    await query.answer()
+    if not isinstance(query.message, Message):
+        return
+    convo = await SessionRepo(session).active_for(user.id)
+    if convo is None or convo.id != callback_data.session_id:
+        # A button from a scene that has since been finished or replaced.
+        await query.message.answer(NO_ACTIVE_SESSION)
+        return
+    await _debrief(query.message, session, user, bot)
+
+
 @router.message(Command("finish"))
-async def cmd_finish(message: Message, session: DbSession, user: User) -> None:
+async def cmd_finish(message: Message, session: DbSession, user: User, bot: Bot) -> None:
+    await _debrief(message, session, user, bot)
+
+
+async def _debrief(message: Message, session: DbSession, user: User, bot: Bot) -> None:
     repo = SessionRepo(session)
     convo = await repo.active_for(user.id)
     if convo is None:
         await message.answer(NO_ACTIVE_SESSION)
         return
+
+    # A scene's checklist was pinned to keep it in view; it goes with the scene.
+    if convo.card_message_id:
+        try:
+            await bot.unpin_chat_message(message.chat.id, message_id=convo.card_message_id)
+        except TelegramAPIError:
+            pass
 
     turns = await repo.history(convo.id, limit=100)
     if len(turns) < MIN_TURNS_FOR_DEBRIEF:

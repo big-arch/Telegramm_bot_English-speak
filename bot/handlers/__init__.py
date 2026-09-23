@@ -8,7 +8,7 @@ would silently swallow every other feature — the single most common cause of
 
 from aiogram import Router
 
-from bot.handlers import conversation, photo, progress, review, settings, start, stats
+from bot.handlers import conversation, photo, progress, review, roleplay, settings, start, stats
 
 router = Router(name="root")
 
@@ -18,6 +18,7 @@ router.include_router(review.router)
 router.include_router(progress.router)
 router.include_router(photo.router)
 router.include_router(stats.router)
+router.include_router(roleplay.router)
 router.include_router(conversation.router)  # catch-all — must stay last
 
 __all__ = ["router"]

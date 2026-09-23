@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardMarkup, WebAppInfo
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    WebAppInfo,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import personas as personas_mod
@@ -10,6 +15,7 @@ from bot.callbacks import (
     FinishCB,
     GoalCB,
     HintCB,
+    MenuCB,
     ScenarioCB,
     LevelCB,
     PersonaCB,
@@ -171,5 +177,55 @@ def debrief_kb() -> InlineKeyboardMarkup:
     base = (settings.public_base_url or "").rstrip("/")
     if base.startswith("https://"):
         kb.button(text="🔁 Повторить слова", web_app=WebAppInfo(url=f"{base}/review"))
+    kb.adjust(2)
+    return kb.as_markup()
+
+
+# --------------------------------------------------------------------------- #
+# The always-visible panel
+# --------------------------------------------------------------------------- #
+
+TALK = "💬 Говорить"
+ROLEPLAY = "🎭 Сценарий"
+WORDS = "🔁 Слова"
+MORE = "☰ Ещё"
+
+
+def main_kb() -> ReplyKeyboardMarkup:
+    """Four buttons that sit above the message field and never go away.
+
+    The Menu button beside the field now opens the home screen, and Telegram
+    gives that place to one thing only: a web app *or* the command list. So the
+    commands moved here — the three things people do daily as buttons, the rest
+    one tap behind "Ещё". One row, so a voice-first bot does not lose its
+    screen to a keyboard; and it can still be folded away with the icon
+    Telegram puts beside the field.
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[[
+            KeyboardButton(text=TALK),
+            KeyboardButton(text=ROLEPLAY),
+            KeyboardButton(text=WORDS),
+            KeyboardButton(text=MORE),
+        ]],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Скажи что-нибудь голосом 🎙",
+    )
+
+
+def more_kb() -> InlineKeyboardMarkup:
+    """Everything else, as buttons with words instead of slash commands."""
+    kb = InlineKeyboardBuilder()
+    for action, label in (
+        ("finish", "🏁 Закончить и разбор"),
+        ("progress", "📊 Мой прогресс"),
+        ("mistakes", "📉 Мои ошибки"),
+        ("settings", "⚙️ Настройки"),
+        ("photo", "🖼 Попросить картинку"),
+        ("help", "❓ Как это работает"),
+        ("diag", "🔧 Если что-то сломалось"),
+    ):
+        kb.button(text=label, callback_data=MenuCB(action=action))
     kb.adjust(2)
     return kb.as_markup()

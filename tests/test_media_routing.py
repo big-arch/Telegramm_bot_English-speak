@@ -95,9 +95,58 @@ def _document(mime: str | None) -> Document:
         (_message(audio=Audio(file_id="a", file_unique_id="a", duration=3)), "on_wrong_media"),
         (_message(voice=Voice(file_id="v", file_unique_id="v", duration=3)), "on_voice"),
         (_message(text="hello"), "on_text"),
+        # The panel's buttons arrive as plain text. The conversation catch-all
+        # would happily take "🎭 Сценарий" as something said to the barista.
+        (_message(text="💬 Говорить"), "press_talk"),
+        (_message(text="🎭 Сценарий"), "press_roleplay"),
+        (_message(text="🔁 Слова"), "press_words"),
+        (_message(text="☰ Ещё"), "press_more"),
     ],
 )
 async def test_each_kind_of_message_reaches_its_own_handler(dispatcher, message, expected):
     FIRED.clear()
     await dispatcher.feed_update(Bot(token="1:x"), Update(update_id=1, message=message))
     assert FIRED == [expected]
+
+
+@pytest.mark.asyncio
+async def test_every_button_under_more_does_something(monkeypatch):
+    """A button that answers the tap and then does nothing is worse than none."""
+    from unittest.mock import AsyncMock
+
+    from bot.callbacks import MenuCB
+    from bot.handlers import menu
+    from bot.keyboards.common import more_kb
+
+    targets = {
+        "finish": (menu.conversation, "cmd_finish"),
+        "progress": (menu.progress, "cmd_progress"),
+        "mistakes": (menu.progress, "cmd_mistakes"),
+        "settings": (menu.settings, "cmd_settings"),
+        "help": (menu.start, "cmd_help"),
+        "diag": (menu.photo, "cmd_diag"),
+    }
+    mocks = {}
+    for action, (module, name) in targets.items():
+        mocks[action] = AsyncMock()
+        monkeypatch.setattr(module, name, mocks[action])
+
+    message = _message(text="☰")
+    answered = []
+
+    async def fake_answer(self, *args, **kwargs):
+        answered.append(args[0] if args else kwargs.get("text"))
+
+    monkeypatch.setattr(Message, "answer", fake_answer)
+
+    for row in more_kb().inline_keyboard:
+        for button in row:
+            data = MenuCB.unpack(button.callback_data)
+            answered.clear()
+            query = AsyncMock()
+            query.message = message
+            await menu.pick_more(query, data, session=None, user=None, bot=None)
+            if data.action in mocks:
+                mocks[data.action].assert_awaited_once()
+            else:
+                assert answered, f"{data.action!r} did nothing"

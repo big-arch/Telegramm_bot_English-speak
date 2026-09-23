@@ -47,6 +47,7 @@ COMMANDS = [
     BotCommand(command="progress", description="Мой прогресс"),
     BotCommand(command="mistakes", description="Мои ошибки"),
     BotCommand(command="settings", description="Настройки"),
+    BotCommand(command="menu", description="Вернуть панель кнопок"),
     BotCommand(command="help", description="Как это работает"),
 ]
 

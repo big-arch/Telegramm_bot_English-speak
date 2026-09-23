@@ -56,3 +56,7 @@ class ScenarioCB(CallbackData, prefix="scn"):
 
 class FinishCB(CallbackData, prefix="fin"):
     session_id: int
+
+
+class MenuCB(CallbackData, prefix="menu"):
+    action: str

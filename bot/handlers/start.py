@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 from bot import personas as personas_mod
 from bot.callbacks import GoalCB, LevelCB, PersonaCB
 from bot.db.models import User
-from bot.keyboards.common import goal_kb, level_kb, persona_kb
+from bot.keyboards.common import goal_kb, level_kb, main_kb, persona_kb
 from bot.services import portraits
 from bot.states import Onboarding
 from bot.texts import (
@@ -17,6 +17,7 @@ from bot.texts import (
     ASK_LEVEL,
     ASK_PERSONA,
     ONBOARDING_DONE,
+    PANEL_ON,
     WELCOME,
 )
 
@@ -98,14 +99,19 @@ async def pick_goal(
     await session.commit()
     await state.clear()
 
-    if isinstance(query.message, Message):
-        await query.message.edit_text(ONBOARDING_DONE)
     await query.answer()
+    if isinstance(query.message, Message):
+        # A reply keyboard cannot ride on an edited message, so the finished
+        # onboarding text is edited in place and the panel arrives with a
+        # short note of its own.
+        await query.message.edit_text(ONBOARDING_DONE)
+        await query.message.answer(PANEL_ON, reply_markup=main_kb())
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(ONBOARDING_DONE)
+    # Carries the panel, so /help is also the way to get it back.
+    await message.answer(ONBOARDING_DONE, reply_markup=main_kb())
 
 
 @router.message(Command("cancel"))

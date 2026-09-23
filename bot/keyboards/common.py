@@ -7,6 +7,7 @@ from bot import personas as personas_mod
 from bot.config import settings
 from bot.callbacks import (
     GoalCB,
+    HintCB,
     LevelCB,
     PersonaCB,
     ReviewCB,
@@ -18,23 +19,30 @@ from bot.db.models import Topic
 from bot.texts import CORRECTION_STYLES, GOALS, LEVEL_HINTS
 
 
-def reader_kb(turn_id: int) -> InlineKeyboardMarkup | None:
-    """The button that opens the tutor's reply as a tappable page.
+def reader_kb(turn_id: int) -> InlineKeyboardMarkup:
+    """The row under every tutor reply: take it apart, or get a way to answer.
 
-    None when there is no public HTTPS URL to open — Telegram refuses a Mini
-    App button otherwise, and a refused button takes the whole message with it.
-    So local polling runs simply do not show it, rather than failing to send
-    the reply at all.
+    The reader needs a public HTTPS URL — Telegram refuses a Mini App button
+    otherwise, and a refused button takes the whole message with it — so local
+    polling runs show only the hint. The hint needs nothing and is always there,
+    because "I don't know what to say" is the most common reason a beginner's
+    turn never happens.
     """
-    base = (settings.public_base_url or "").rstrip("/")
-    if not base.startswith("https://"):
-        return None
-
     kb = InlineKeyboardBuilder()
-    kb.button(
-        text="📖 Разобрать по словам",
-        web_app=WebAppInfo(url=f"{base}/app?turn={turn_id}"),
-    )
+    base = (settings.public_base_url or "").rstrip("/")
+    if base.startswith("https://"):
+        kb.button(text="📖 Разобрать", web_app=WebAppInfo(url=f"{base}/app?turn={turn_id}"))
+    kb.button(text="💡 Как ответить?", callback_data=HintCB(turn_id=turn_id))
+    kb.adjust(2)
+    return kb.as_markup()
+
+
+def opening_kb() -> InlineKeyboardMarkup:
+    """Under a conversation's first line, which is not a turn yet: no reader,
+    only the hint — the very first reply is where a beginner is most likely to
+    freeze. turn_id 0 means "the opening line of the conversation in progress"."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💡 Как ответить?", callback_data=HintCB(turn_id=0))
     return kb.as_markup()
 
 

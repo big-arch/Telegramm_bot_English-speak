@@ -8,6 +8,7 @@ result.
 
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime, timezone
 
@@ -19,13 +20,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 
 from bot import personas as personas_mod
-from bot.callbacks import TopicCB
+from bot.callbacks import HintCB, TopicCB
 from bot.config import settings
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
-from bot.keyboards.common import reader_kb, topics_kb
+from bot.keyboards.common import opening_kb, reader_kb, topics_kb
 from bot.services import conversation as convo_service
-from bot.services import feedback, fluency, images, llm, portraits, stt, vision, wellbeing
+from bot.services import feedback, fluency, hints, images, llm, portraits, stt, vision, wellbeing
 from bot.services.speak import send_spoken
 from bot.texts import (
     CHOOSE_TOPIC,
@@ -120,6 +121,52 @@ async def start_topic(
         persona=persona,
         level=user.productive_level,
         caption=topic.opening_line,
+        reply_markup=opening_kb(),
+    )
+
+
+@router.callback_query(HintCB.filter())
+async def give_hint(
+    query: CallbackQuery,
+    callback_data: HintCB,
+    session: DbSession,
+    user: User,
+) -> None:
+    """Three ways to answer the line this button sits under."""
+    if not isinstance(query.message, Message):
+        await query.answer()
+        return
+
+    if callback_data.turn_id == 0:
+        # The opening line of the conversation in progress — not a turn yet.
+        convo = await SessionRepo(session).active_for(user.id)
+        line = convo.opening_line if convo else None
+        cache_key = -convo.id if convo else 0
+    else:
+        turn = await session.get(Turn, callback_data.turn_id)
+        # Callback data is client-supplied; the id in it proves nothing on its
+        # own, so a turn that is not theirs is treated as one that is not there.
+        line = turn.assistant_text if turn and turn.user_id == user.id else None
+        cache_key = callback_data.turn_id
+
+    if not line:
+        await query.answer()
+        return
+
+    # Acknowledged straight away: generating takes a couple of seconds, and a
+    # button that does nothing for two seconds gets pressed again.
+    await query.answer("💡 Думаю, как можно ответить…")
+
+    suggestions = await hints.suggest(cache_key, line, user.productive_level)
+    if not suggestions:
+        await query.message.answer(
+            "Не получилось придумать варианты 😕 Попробуй ответить хоть одним словом — "
+            "это тоже ответ, и с него легко продолжить."
+        )
+        return
+
+    await query.message.answer(
+        hints.render(suggestions, with_russian=user.productive_level in {"A1", "A2"})
     )
 
 
@@ -193,6 +240,27 @@ async def _reply(
     )
 
 
+def _heard(text: str, result: convo_service.TurnResult | None = None) -> str:
+    """The transcript line, with the native version hidden under it if there is one.
+
+    Escaped, always. Speech-to-text writes "rock & roll" and "x < y" like any
+    other text, and an unescaped ampersand in an HTML message makes Telegram
+    reject the edit — which surfaced as the whole turn failing.
+
+    The native version is withheld on a turn that carried feeling: nobody who
+    has just said they lost their job should find a grammar note under it.
+    """
+    line = f"🗣 <i>{html.escape(text)}</i>"
+    if result is None or result.assessment is None:
+        return line
+    if wellbeing.read(text).needs_care:
+        return line
+    better = feedback.native_rewrite(text, result.assessment.rewritten)
+    if better:
+        line += f"\n✨ Как сказал бы носитель: <tg-spoiler>{html.escape(better)}</tg-spoiler>"
+    return line
+
+
 async def _crisis_handled(message: Message, user: User, text: str) -> bool:
     """Stop everything if this is not a language lesson any more.
 
@@ -258,10 +326,10 @@ async def on_voice(message: Message, session: DbSession, user: User, bot: Bot) -
 
     # Show the transcript straight away: it is the fastest, cheapest feedback
     # there is, and it tells the learner what was actually heard.
-    await status.edit_text(f"🗣 <i>{transcript.text}</i>\n\n{THINKING}")
+    await status.edit_text(f"{_heard(transcript.text)}\n\n{THINKING}")
 
     if await _crisis_handled(message, user, transcript.text):
-        await status.edit_text(f"🗣 <i>{transcript.text}</i>")
+        await status.edit_text(_heard(transcript.text))
         return
 
     convo = await _ensure_session(session, user)
@@ -282,7 +350,7 @@ async def on_voice(message: Message, session: DbSession, user: User, bot: Bot) -
         await status.edit_text(ERROR_GENERIC)
         return
 
-    await status.edit_text(f"🗣 <i>{transcript.text}</i>")
+    await status.edit_text(_heard(transcript.text, result))
     await _reply(
         bot, session, chat_id=message.chat.id, convo=convo, user=user,
         text=result.reply, photo_query=result.photo_query, turn_id=result.turn.id,
@@ -455,7 +523,13 @@ async def on_text(message: Message, session: DbSession, user: User, bot: Bot) ->
         await status.edit_text(ERROR_GENERIC)
         return
 
-    await status.delete()
+    # Their own message is already on screen, so only the native version is
+    # worth a line — and when there is none, the placeholder simply goes.
+    shown = _heard(text, result)
+    if "tg-spoiler" in shown:
+        await status.edit_text(shown.split("\n", 1)[1])
+    else:
+        await status.delete()
     await _reply(
         bot, session, chat_id=message.chat.id, convo=convo, user=user,
         text=result.reply, photo_query=result.photo_query, turn_id=result.turn.id,

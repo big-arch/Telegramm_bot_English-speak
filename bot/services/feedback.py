@@ -17,6 +17,7 @@ understood.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 
 from bot.services.llm import Finding
@@ -140,3 +141,33 @@ def hint_for(finding: Finding) -> str:
         f"Подсказка: {tag}.\n\n"
         f"Попробуешь ещё раз?"
     )
+
+
+# --------------------------------------------------------------------------- #
+# "How a native speaker would say it"
+# --------------------------------------------------------------------------- #
+
+_WORDS = re.compile(r"[a-z']+")
+
+
+def _shape(text: str) -> list[str]:
+    """The words, without the case and punctuation that speech-to-text invents."""
+    return _WORDS.findall((text or "").lower().replace("’", "'"))
+
+
+def native_rewrite(utterance: str, rewritten: str | None) -> str | None:
+    """The assessor's natural version of what they said, when it is worth showing.
+
+    Shown hidden under a spoiler, never inline: the rule of this product is
+    that nobody is interrupted with corrections mid-conversation, and a
+    spoiler is a correction you have to ask for. None when there is nothing to
+    ask for — a rewrite that differs only in a comma or a capital letter is
+    the assessor tidying transcription noise, and showing it would teach the
+    learner that they made a mistake they did not make.
+    """
+    rewritten = (rewritten or "").strip()
+    if not rewritten or len(rewritten) > 400:
+        return None
+    if _shape(rewritten) == _shape(utterance):
+        return None
+    return rewritten

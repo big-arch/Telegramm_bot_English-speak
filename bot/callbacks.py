@@ -44,3 +44,7 @@ class RetryCB(CallbackData, prefix="rty"):
 
     error_id: int
     action: str  # show | skip
+
+
+class HintCB(CallbackData, prefix="hint"):
+    turn_id: int

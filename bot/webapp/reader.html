@@ -17,9 +17,7 @@
     --mark:    #e5484d;   /* the red the whole feature is about */
     --mark-bg: rgba(229, 72, 77, 0.10);
   }
-  @media (prefers-color-scheme: dark) {
-    :root { --mark: #ff6369; --mark-bg: rgba(255, 99, 105, 0.16); }
-  }
+  :root[data-theme="dark"] { --mark: #ff6369; --mark-bg: rgba(255, 99, 105, 0.16); }
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
@@ -94,6 +92,18 @@
 </div>
 
 <script>
+
+/* One source of truth for light and dark: Telegram's, not the operating
+   system's. They disagree more often than you would think — a dark Telegram
+   on a light phone is common — and taking the surfaces from one and the data
+   colours from the other paints dark squares on a white card. */
+function applyTheme() {
+  const scheme = window.Telegram?.WebApp?.colorScheme
+    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = scheme;
+}
+applyTheme();
+window.Telegram?.WebApp?.onEvent?.("themeChanged", applyTheme);
 const tg = window.Telegram?.WebApp;
 tg?.ready();
 tg?.expand();

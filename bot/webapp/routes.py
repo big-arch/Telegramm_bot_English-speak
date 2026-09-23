@@ -14,7 +14,7 @@ reader would be a way to put arbitrary text into someone else's lesson history.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from aiohttp import web
@@ -346,6 +346,145 @@ async def review_reset(request: web.Request) -> web.Response:
     return web.json_response({"restored": restored})
 
 
+# --------------------------------------------------------------------------- #
+# Home: the screen behind the menu button
+# --------------------------------------------------------------------------- #
+
+HOME_PAGE = Path(__file__).parent / "home.html"
+HEATMAP_DAYS = 84  # twelve weeks: long enough to show a habit, short enough to fit a phone
+
+_LEVELS = ["A1", "A2", "B1", "B2", "C1", "C2"]
+
+
+async def home_page(request: web.Request) -> web.Response:
+    return web.Response(
+        body=HOME_PAGE.read_bytes(),
+        content_type="text/html",
+        charset="utf-8",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+async def home_data(request: web.Request) -> web.Response:
+    """Everything the home screen draws, in one request.
+
+    One call rather than five because the screen opens from a button and is
+    judged in the first half-second; a dashboard that assembles itself tile by
+    tile in front of you feels slow however fast each tile is.
+    """
+    from sqlalchemy import func
+
+    from bot import personas as personas_mod
+    from bot.db.repositories import streak_days
+
+    async with sessionmaker() as db:
+        user = await _learner(request, db)
+        cards = CardRepo(db)
+
+        since = datetime.now(timezone.utc) - timedelta(days=HEATMAP_DAYS)
+        rows = await db.execute(
+            select(func.date(Turn.created_at), func.count())
+            .where(Turn.user_id == user.id, Turn.created_at >= since)
+            .group_by(func.date(Turn.created_at))
+        )
+        activity = {str(day): count for day, count in rows.all()}
+
+        turns = await db.scalar(
+            select(func.count()).select_from(Turn).where(Turn.user_id == user.id)
+        ) or 0
+        seconds = await db.scalar(
+            select(func.coalesce(func.sum(Turn.audio_seconds), 0.0)).where(
+                Turn.user_id == user.id
+            )
+        ) or 0.0
+
+        learning = len(await cards.study_queue(user.id, limit=10_000))
+        archived = await cards.archived_count(user.id)
+        due = await cards.count_due(user.id)
+        streak = await streak_days(db, user.id, user.timezone)
+
+    # Progress inside the current band, not towards C2: "38% of the way to B2"
+    # moves every week, "B1 of six levels" does not move for months, and a
+    # number that does not move is a number people stop looking at.
+    #
+    # The band comes from the level the learner is shown, not from the score:
+    # the two can disagree after a manual level change, and a ring that reads
+    # "B1 -> B1" is worse than no ring.
+    score = float(user.level_score or 0)
+    level = user.productive_level if user.productive_level in _LEVELS else "A2"
+    band = _LEVELS.index(level)
+    within = 1.0 if band == len(_LEVELS) - 1 else (score - band * 20) / 20
+
+    current = personas_mod.get(user.persona_key)
+    return web.json_response({
+        "name": user.first_name or "",
+        "level": level,
+        "next_level": _LEVELS[min(band + 1, len(_LEVELS) - 1)],
+        "level_progress": round(max(0.0, min(within, 1.0)), 3),
+        "streak": streak,
+        "turns": turns,
+        "minutes": round(float(seconds) / 60),
+        "learning": learning,
+        "archived": archived,
+        "due": due,
+        "activity": activity,
+        "days": HEATMAP_DAYS,
+        "persona": current.key,
+        "personas": [
+            {
+                "key": p.key,
+                "name": p.name,
+                "emoji": p.emoji,
+                "accent": p.accent,
+                "tagline": p.tagline_ru,
+                "suits": personas_mod.suits(p, user.productive_level),
+            }
+            for p in personas_mod.PERSONAS
+        ],
+    })
+
+
+async def choose_persona(request: web.Request) -> web.Response:
+    """Switch partner from the gallery."""
+    from bot import personas as personas_mod
+
+    try:
+        body = await request.json()
+    except ValueError:
+        raise web.HTTPBadRequest(text="expected json")
+
+    key = str(body.get("key", ""))
+    if key not in {p.key for p in personas_mod.PERSONAS}:
+        raise web.HTTPBadRequest(text="no such partner")
+
+    async with sessionmaker() as db:
+        user = await _learner(request, db, body)
+        user.persona_key = key
+        # The conversation in progress keeps the partner it started with.
+        # Changing voice and character mid-sentence is not a feature.
+        await db.commit()
+
+    return web.json_response({"persona": key})
+
+
+async def avatar(request: web.Request) -> web.Response:
+    """A partner's portrait, as SVG. Public on purpose: it is the same picture
+    for everyone and carries nothing about anyone, so asking for a signature
+    would only make the gallery slower to load."""
+    from bot import personas as personas_mod
+    from bot.webapp import avatars
+
+    key = request.match_info["key"]
+    persona = next((p for p in personas_mod.PERSONAS if p.key == key), None)
+    if persona is None:
+        raise web.HTTPNotFound()
+    return web.Response(
+        text=avatars.svg(persona.key, persona.name),
+        content_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 def attach(app: web.Application, *, bot_token: str) -> None:
     app["bot_token"] = bot_token
     app.router.add_get("/app", page)
@@ -358,3 +497,9 @@ def attach(app: web.Application, *, bot_token: str) -> None:
     app.router.add_post("/api/review/reveal", review_reveal)
     app.router.add_post("/api/review/answer", review_answer)
     app.router.add_post("/api/review/reset", review_reset)
+
+    app.router.add_get("/avatar/{key}.svg", avatar)
+
+    app.router.add_get("/home", home_page)
+    app.router.add_get("/api/home", home_data)
+    app.router.add_post("/api/persona", choose_persona)

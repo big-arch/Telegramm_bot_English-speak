@@ -158,6 +158,27 @@ def webhook_url() -> str:
     return f"{base}{settings.webhook_path}"
 
 
+async def _install_home_button(bot: Bot) -> None:
+    """Make the "Menu" button beside the message field open the home screen.
+
+    That button is the most-pressed control in any bot and by default it opens
+    a list of slash commands. Pointing it at the app turns the first tap into
+    the product's best screen instead of its plainest. A failure here is logged
+    and ignored: the bot works without it, just less beautifully.
+    """
+    from aiogram.types import MenuButtonWebApp, WebAppInfo
+
+    base = (settings.public_base_url or "").rstrip("/")
+    if not base.startswith("https://"):
+        return
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="SpeakOut", web_app=WebAppInfo(url=f"{base}/home"))
+        )
+    except Exception:  # noqa: BLE001 - cosmetic, never fatal
+        logger.exception("could not install the home menu button")
+
+
 def build_app(bot: Bot, dp: Dispatcher, secret: str) -> web.Application:
     from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
@@ -172,6 +193,7 @@ def build_app(bot: Bot, dp: Dispatcher, secret: str) -> web.Application:
         )
         await bot.set_my_commands(COMMANDS)
         logger.info("webhook set to %s", url)
+        await _install_home_button(bot)
 
     async def on_cleanup(_: web.Application) -> None:
         await bot.session.close()

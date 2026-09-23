@@ -17,10 +17,8 @@
     --know-bg: rgba(47, 158, 87, .12);
     --dont-bg: rgba(229, 72, 77, .12);
   }
-  @media (prefers-color-scheme: dark) {
-    :root { --know: #4cc47c; --dont: #ff6369;
+  :root[data-theme="dark"] { --know: #4cc47c; --dont: #ff6369;
             --know-bg: rgba(76,196,124,.18); --dont-bg: rgba(255,99,105,.18); }
-  }
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); }
@@ -118,11 +116,30 @@
 </footer>
 
 <script>
+
+/* One source of truth for light and dark: Telegram's, not the operating
+   system's. They disagree more often than you would think — a dark Telegram
+   on a light phone is common — and taking the surfaces from one and the data
+   colours from the other paints dark squares on a white card. */
+function applyTheme() {
+  const scheme = window.Telegram?.WebApp?.colorScheme
+    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = scheme;
+}
+applyTheme();
+window.Telegram?.WebApp?.onEvent?.("themeChanged", applyTheme);
 const tg = window.Telegram?.WebApp;
 tg?.ready();
 tg?.expand();
 
 const initData = tg?.initData || "";
+
+// Opened from the home screen, the way back is Telegram's own arrow in the
+// header — a second, in-page back button would be one control too many.
+if (new URLSearchParams(location.search).get("from") === "home" && tg?.BackButton) {
+  tg.BackButton.show();
+  tg.BackButton.onClick(() => { location.href = "/home"; });
+}
 const $ = (id) => document.getElementById(id);
 const buzz = (s) => { try { tg?.HapticFeedback?.impactOccurred(s); } catch (_) {} };
 

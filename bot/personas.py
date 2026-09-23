@@ -110,7 +110,7 @@ PERSONAS: tuple[Persona, ...] = (
     Persona(
         key="chen",
         name="Dr. Chen",
-        emoji="📐",
+        emoji="🎓",
         accent="American (neutral)",
         tagline_ru="Точный и требовательный. Для IELTS, работы и собеседований.",
         levels=("B1", "B2", "C1"),

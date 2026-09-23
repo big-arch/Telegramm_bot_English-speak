@@ -462,3 +462,77 @@ def test_the_review_card_records_the_verdict_the_learner_settled_on():
         [node, str(script)], capture_output=True, text=True, timeout=60
     )
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# Home: the screen behind the menu button
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_home_draws_from_real_numbers(reader):
+    client, _turn_id, user_id = reader
+    headers = {"X-Telegram-Init-Data": valid(4242)}
+
+    async with sessionmaker() as db:
+        await _stock(db, user_id, ["queue", "stubborn"])
+
+    data = await (await client.get("/api/home", headers=headers)).json()
+
+    assert data["level"] == "B1" and data["next_level"] == "B2"
+    assert 0.0 <= data["level_progress"] <= 1.0
+    assert data["turns"] == 1          # the fixture's one turn
+    assert data["learning"] == 2
+    assert data["days"] == 84
+    # The fixture's turn happened today, so today is lit.
+    assert sum(data["activity"].values()) == 1
+    # Every partner is offered, the current one is named.
+    assert {p["key"] for p in data["personas"]} >= {"emma", "ava", "ethan"}
+    assert data["persona"] == "emma"
+
+
+@pytest.mark.asyncio
+async def test_home_is_private_to_its_owner(reader):
+    client, *_ = reader
+    assert (await client.get("/api/home")).status == 401
+
+
+@pytest.mark.asyncio
+async def test_choosing_a_partner_from_the_gallery_sticks(reader):
+    client, *_ = reader
+    headers = {"X-Telegram-Init-Data": valid(4242)}
+
+    chosen = await client.post("/api/persona", json={"key": "ethan"}, headers=headers)
+    assert (await chosen.json()) == {"persona": "ethan"}
+    data = await (await client.get("/api/home", headers=headers)).json()
+    assert data["persona"] == "ethan"
+
+    # Nobody invents a partner, and nobody chooses for somebody else.
+    bogus = await client.post("/api/persona", json={"key": "hal9000"}, headers=headers)
+    assert bogus.status == 400
+    unsigned = await client.post("/api/persona", json={"key": "ava"})
+    assert unsigned.status == 401
+
+
+@pytest.mark.asyncio
+async def test_portraits_are_served_as_svg_to_anyone(reader):
+    """Public on purpose: the same picture for everyone, carrying nothing about
+    anyone, so a signature would only slow the gallery down."""
+    client, *_ = reader
+    response = await client.get("/avatar/ava.svg")
+    assert response.status == 200
+    assert response.content_type == "image/svg+xml"
+    assert "<svg" in await response.text()
+    assert (await client.get("/avatar/nobody.svg")).status == 404
+
+
+def test_every_mini_app_takes_its_theme_from_telegram_not_the_os():
+    """Found by looking at a screenshot: surfaces came from Telegram's theme and
+    data colours from the operating system's, which disagree whenever someone
+    runs a dark Telegram on a light phone — dark squares on a white card."""
+    from pathlib import Path
+
+    for name in ("home.html", "review.html", "reader.html"):
+        html = (Path("bot/webapp") / name).read_text(encoding="utf-8")
+        assert "prefers-color-scheme: dark)" not in html.split("<script>")[0], name
+        assert "WebApp?.colorScheme" in html, name

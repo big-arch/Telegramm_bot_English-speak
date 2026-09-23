@@ -57,7 +57,8 @@ const cards = [
 ];
 
 globalThis.window = {};
-globalThis.document = { getElementById: element };
+globalThis.document = { getElementById: element, documentElement: { dataset: {} } };
+globalThis.matchMedia = () => ({ matches: false });
 globalThis.Image = class {
   set src(_) {}
 };

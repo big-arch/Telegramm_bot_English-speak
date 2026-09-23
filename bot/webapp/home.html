@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>SpeakOut</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  /* Telegram hands the page the user's own theme; everything that is not data
+     wears it, so the app feels like part of the client. The data colours are
+     fixed and chosen separately below, because a heatmap cannot be allowed to
+     change meaning with somebody's wallpaper. */
+  :root {
+    --bg:     var(--tg-theme-bg-color, #ffffff);
+    --fg:     var(--tg-theme-text-color, #16161a);
+    --muted:  var(--tg-theme-hint-color, #86868b);
+    --card:   var(--tg-theme-secondary-bg-color, #f2f2f5);
+    --link:   var(--tg-theme-link-color, #2a78d6);
+    --btn:    var(--tg-theme-button-color, #2a78d6);
+    --btn-fg: var(--tg-theme-button-text-color, #ffffff);
+
+    /* Sequential blue, one hue light->dark: more practice, more ink. */
+    --heat-0: #e9e8e4;
+    --heat-1: #b7d3f6;
+    --heat-2: #6da7ec;
+    --heat-3: #2a78d6;
+    --heat-4: #184f95;
+    --ring:   #2a78d6;
+    --track:  rgba(127, 127, 127, .18);
+    --flame:  #e8573f;
+  }
+  /* Dark is selected, not flipped: the same ramp, walked the other way, so the
+     busiest day is the one that stands out most from a dark card. */
+  :root[data-theme="dark"] {
+    /* Fallbacks only: inside Telegram the tg-theme variables win. These are
+       for the page opened anywhere else, so it is never white-on-white. */
+    --bg:     var(--tg-theme-bg-color, #17181b);
+    --fg:     var(--tg-theme-text-color, #f2f2f2);
+    --muted:  var(--tg-theme-hint-color, #8e8e93);
+    --card:   var(--tg-theme-secondary-bg-color, #232428);
+
+    --heat-0: #2c2c2a;
+    --heat-1: #184f95;
+    --heat-2: #2a78d6;
+    --heat-3: #6da7ec;
+    --heat-4: #b7d3f6;
+    --ring:   #3987e5;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 400 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 18px 16px calc(28px + env(safe-area-inset-bottom));
+    max-width: 36rem; margin: 0 auto;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .1em;
+             text-transform: uppercase; color: var(--muted); }
+  h1 { font: 600 28px/1.15 Georgia, "Bitstream Charter", serif; margin: 4px 0 18px; }
+
+  .card { background: var(--card); border-radius: 20px; padding: 16px; margin-bottom: 12px; }
+
+  /* --- the partner you are talking to ------------------------------------ */
+  .partner { display: flex; gap: 14px; align-items: center; }
+  .partner img { width: 84px; height: 84px; border-radius: 18px; flex: none;
+                 box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+  .partner .who { font-size: 13px; color: var(--muted); }
+  .partner .name { font: 600 21px/1.2 Georgia, "Bitstream Charter", serif; margin: 2px 0; }
+  .partner .tag { font-size: 14px; color: var(--muted); line-height: 1.35; }
+
+  /* --- three headline numbers -------------------------------------------- */
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+  .tile { background: var(--card); border-radius: 18px; padding: 14px 12px; }
+  .tile .num { font: 600 28px/1 -apple-system, "Segoe UI", sans-serif;
+               font-variant-numeric: tabular-nums; }
+  .tile .lbl { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.25; }
+  .tile.streak .num { color: var(--flame); }
+
+  /* --- level ring ---------------------------------------------------------- */
+  .level { display: flex; align-items: center; gap: 16px; }
+  .level svg { flex: none; }
+  .level .big { font: 600 20px/1.2 Georgia, "Bitstream Charter", serif; }
+  .level .small { font-size: 14px; color: var(--muted); }
+
+  /* --- twelve weeks -------------------------------------------------------- */
+  .heat-head { display: flex; justify-content: space-between; align-items: baseline;
+               margin-bottom: 10px; }
+  .heat-head b { font-size: 15px; }
+  .heat-head span { font-size: 13px; color: var(--muted); }
+  .heat { display: grid; grid-template-rows: repeat(7, 1fr); grid-auto-flow: column;
+          gap: 3px; }
+  .cell { aspect-ratio: 1; border-radius: 4px; background: var(--heat-0); }
+  /* An empty day is derived from the user's own theme rather than fixed: a
+     warm grey on Telegram's cool blue-grey card reads as dirt, not absence. */
+  @supports (background: color-mix(in srgb, red, blue)) {
+    /* Both selectors: the dark block is more specific than :root and would
+       otherwise keep its fixed grey. */
+    :root, :root[data-theme="dark"] { --heat-0: color-mix(in srgb, var(--fg) 8%, var(--card)); }
+  }
+  .cell.pad { background: transparent; }
+  .cell.today { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .cell.picked { outline: 2px solid var(--link); outline-offset: 1px; }
+  .l1 { background: var(--heat-1); } .l2 { background: var(--heat-2); }
+  .l3 { background: var(--heat-3); } .l4 { background: var(--heat-4); }
+  .heat-foot { display: flex; justify-content: space-between; align-items: center;
+               margin-top: 10px; font-size: 12px; color: var(--muted); min-height: 18px; }
+  .legend { display: flex; align-items: center; gap: 3px; }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+  /* --- actions ------------------------------------------------------------- */
+  .actions { display: grid; grid-template-columns: 1.4fr 1fr; gap: 10px; margin: 16px 0 26px; }
+  .actions button {
+    font: 600 16px/1.2 inherit; border: 0; border-radius: 16px; padding: 16px 12px;
+    cursor: pointer; transition: transform .1s;
+  }
+  .actions button:active { transform: scale(.97); }
+  .primary { background: var(--btn); color: var(--btn-fg); }
+  .secondary { background: var(--card); color: var(--fg); }
+
+  /* --- the gallery --------------------------------------------------------- */
+  .gallery-title { display: flex; justify-content: space-between; align-items: baseline;
+                   margin-bottom: 10px; }
+  .gallery-title b { font: 600 19px/1.2 Georgia, "Bitstream Charter", serif; }
+  .gallery-title span { font-size: 13px; color: var(--muted); }
+  /* Full-bleed horizontal strip: it runs off the edge on purpose, because a
+     row that ends exactly at the margin does not look like it scrolls. */
+  .gallery { display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory;
+             margin: 0 -16px; padding: 4px 16px 10px; scrollbar-width: none; }
+  .gallery::-webkit-scrollbar { display: none; }
+  .face { flex: none; width: 148px; scroll-snap-align: start; cursor: pointer; }
+  .face img { width: 148px; height: 148px; border-radius: 20px; display: block;
+              transition: transform .15s, box-shadow .15s; }
+  .face:active img { transform: scale(.97); }
+  .face.current img { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--link); }
+  .face .n { font-weight: 600; margin-top: 8px; font-size: 15px; }
+  .face .a { font-size: 12px; color: var(--muted); line-height: 1.3; }
+
+  .toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom));
+           transform: translate(-50%, 20px); opacity: 0; transition: .25s;
+           background: var(--fg); color: var(--bg); font-size: 14px;
+           padding: 10px 16px; border-radius: 999px; pointer-events: none; }
+  .toast.show { opacity: .94; transform: translate(-50%, 0); }
+
+  .skeleton { opacity: .4; }
+  .err { color: var(--flame); }
+</style>
+</head>
+<body>
+
+<div class="eyebrow" id="date"></div>
+<h1 id="hello">SpeakOut</h1>
+
+<div class="card partner" id="partner" hidden>
+  <img id="partner-img" alt="">
+  <div>
+    <div class="who">Сейчас говоришь с</div>
+    <div class="name" id="partner-name"></div>
+    <div class="tag" id="partner-tag"></div>
+  </div>
+</div>
+
+<div class="tiles">
+  <div class="tile streak"><div class="num" id="t-streak">–</div><div class="lbl" id="t-streak-l">дней подряд</div></div>
+  <div class="tile"><div class="num" id="t-min">–</div><div class="lbl">минут<br>говорил</div></div>
+  <div class="tile"><div class="num" id="t-words">–</div><div class="lbl">слов<br>в изучении</div></div>
+</div>
+
+<div class="card level" id="level-card">
+  <svg width="72" height="72" viewBox="0 0 72 72" role="img" id="ring" aria-label="">
+    <circle cx="36" cy="36" r="30" fill="none" stroke="var(--track)" stroke-width="7"/>
+    <circle id="ring-arc" cx="36" cy="36" r="30" fill="none" stroke="var(--ring)" stroke-width="7"
+            stroke-linecap="round" stroke-dasharray="0 999" transform="rotate(-90 36 36)"/>
+    <text id="ring-label" x="36" y="41" text-anchor="middle" fill="currentColor"
+          font-family="Georgia, 'Bitstream Charter', serif" font-size="17" font-weight="600">–</text>
+  </svg>
+  <div>
+    <div class="big" id="level-big"></div>
+    <div class="small" id="level-small"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="heat-head"><b>Двенадцать недель</b><span id="heat-sum"></span></div>
+  <div class="heat" id="heat" role="img" aria-label=""></div>
+  <div class="heat-foot">
+    <span id="heat-pick">Нажми на день</span>
+    <span class="legend" aria-hidden="true">меньше
+      <i style="background:var(--heat-0)"></i><i style="background:var(--heat-1)"></i>
+      <i style="background:var(--heat-2)"></i><i style="background:var(--heat-3)"></i>
+      <i style="background:var(--heat-4)"></i> больше</span>
+  </div>
+</div>
+
+<div class="actions">
+  <button class="primary" id="go-review">Повторить слова</button>
+  <button class="secondary" id="go-talk">Говорить</button>
+</div>
+
+<div class="gallery-title"><b>Собеседники</b><span>⭐ — под твой уровень</span></div>
+<div class="gallery" id="gallery"></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+
+/* One source of truth for light and dark: Telegram's, not the operating
+   system's. They disagree more often than you would think — a dark Telegram
+   on a light phone is common — and taking the surfaces from one and the data
+   colours from the other paints dark squares on a white card. */
+function applyTheme() {
+  const scheme = window.Telegram?.WebApp?.colorScheme
+    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = scheme;
+}
+applyTheme();
+window.Telegram?.WebApp?.onEvent?.("themeChanged", applyTheme);
+const tg = window.Telegram?.WebApp;
+tg?.ready();
+tg?.expand();
+
+const initData = tg?.initData || "";
+const $ = (id) => document.getElementById(id);
+const buzz = (s) => { try { tg?.HapticFeedback?.impactOccurred(s); } catch (_) {} };
+
+const MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const DAYS = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
+
+function api(path, options = {}) {
+  return fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": initData },
+  });
+}
+
+/* Russian plurals: 1 день, 2 дня, 5 дней. Getting this wrong is the fastest way
+   for a Russian-language interface to announce it was written in English. */
+function plural(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+}
+
+function toast(text) {
+  const t = $("toast");
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+function renderHeader(data) {
+  const now = new Date();
+  $("date").textContent = `${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS[now.getMonth()]}`;
+  $("hello").textContent = data.name ? `Привет, ${data.name}` : "Привет";
+}
+
+function renderPartner(data) {
+  const p = data.personas.find((x) => x.key === data.persona);
+  if (!p) return;
+  $("partner").hidden = false;
+  $("partner-img").src = `/avatar/${p.key}.svg`;
+  $("partner-img").alt = p.name;
+  $("partner-name").textContent = p.name;
+  $("partner-tag").textContent = p.tagline;
+}
+
+function renderTiles(data) {
+  $("t-streak").textContent = data.streak;
+  $("t-streak-l").textContent = `${plural(data.streak, "день", "дня", "дней")} подряд`;
+  $("t-min").textContent = data.minutes;
+  $("t-words").textContent = data.learning;
+}
+
+/* Progress inside the current band. "38% to B2" moves every week; "B1 of six"
+   does not move for months, and a number that does not move is a number people
+   stop looking at. */
+function renderLevel(data) {
+  const circumference = 2 * Math.PI * 30;
+  const done = data.level === data.next_level ? 1 : data.level_progress;
+  $("ring-arc").setAttribute("stroke-dasharray", `${(done * circumference).toFixed(1)} 999`);
+  $("ring-label").textContent = data.level;
+  const pct = Math.round(done * 100);
+  $("ring").setAttribute("aria-label", `Уровень ${data.level}, ${pct}% до ${data.next_level}`);
+  if (data.level === data.next_level) {
+    $("level-big").textContent = `Уровень ${data.level}`;
+    $("level-small").textContent = "Выше в этой шкале уже некуда";
+  } else {
+    $("level-big").textContent = `${pct}% до ${data.next_level}`;
+    $("level-small").textContent = "Растёт от того, как ты говоришь, а не от тестов";
+  }
+}
+
+function bin(count) {
+  if (!count) return 0;
+  if (count <= 2) return 1;
+  if (count <= 5) return 2;
+  if (count <= 10) return 3;
+  return 4;
+}
+
+/* Twelve weeks, Monday at the top, one column per week — the shape everyone
+   has seen on GitHub, so nobody has to learn how to read it. Dates are built in
+   UTC to match the server's grouping; a local-time key would shift every
+   evening's practice onto the wrong square. */
+function renderHeat(data) {
+  const heat = $("heat");
+  heat.textContent = "";
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const dayMs = 86400000;
+  const first = todayUtc - (data.days - 1) * dayMs;
+  const lead = (new Date(first).getUTCDay() + 6) % 7;   // blanks before a Monday
+
+  for (let i = 0; i < lead; i++) {
+    const pad = document.createElement("div");
+    pad.className = "cell pad";
+    heat.append(pad);
+  }
+
+  let active = 0;
+  for (let t = first; t <= todayUtc; t += dayMs) {
+    const d = new Date(t);
+    const key = d.toISOString().slice(0, 10);
+    const count = data.activity[key] || 0;
+    if (count) active += 1;
+
+    const cell = document.createElement("div");
+    cell.className = `cell l${bin(count)}${t === todayUtc ? " today" : ""}`;
+    const label = `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} — ${
+      count ? `${count} ${plural(count, "реплика", "реплики", "реплик")}` : "без практики"}`;
+    cell.title = label;
+    // A phone has no hover, so a tap is the hover.
+    cell.onclick = () => {
+      heat.querySelectorAll(".picked").forEach((c) => c.classList.remove("picked"));
+      cell.classList.add("picked");
+      $("heat-pick").textContent = label;
+      buzz("light");
+    };
+    heat.append(cell);
+  }
+
+  const summary = `${active} ${plural(active, "день", "дня", "дней")} с практикой`;
+  $("heat-sum").textContent = summary;
+  heat.setAttribute("aria-label", `Активность за ${data.days} дней: ${summary}`);
+}
+
+function renderActions(data) {
+  $("go-review").textContent = data.due
+    ? `Повторить · ${data.due}`
+    : data.learning ? "Повторить слова" : "Слов пока нет";
+  $("go-review").disabled = !data.learning && !data.archived;
+  $("go-review").onclick = () => { location.href = "/review?from=home"; };
+  // Talking happens in the chat: that is where the microphone is.
+  $("go-talk").onclick = () => tg ? tg.close() : history.back();
+}
+
+function renderGallery(data) {
+  const gallery = $("gallery");
+  gallery.textContent = "";
+  for (const p of data.personas) {
+    const face = document.createElement("div");
+    face.className = `face${p.key === data.persona ? " current" : ""}`;
+    face.innerHTML = `<img alt="" loading="lazy"><div class="n"></div><div class="a"></div>`;
+    face.querySelector("img").src = `/avatar/${p.key}.svg`;
+    face.querySelector("img").alt = p.name;
+    face.querySelector(".n").textContent = `${p.suits ? "⭐ " : ""}${p.name}`;
+    face.querySelector(".a").textContent = p.accent;
+    face.onclick = () => choose(data, p);
+    gallery.append(face);
+  }
+  // Start the strip on whoever you are talking to, not on whoever is first.
+  gallery.querySelector(".current")?.scrollIntoView({ inline: "center", block: "nearest" });
+}
+
+async function choose(data, p) {
+  if (p.key === data.persona) {
+    toast(`Ты и так говоришь с ${p.name}`);
+    return;
+  }
+  const previous = data.persona;
+  data.persona = p.key;          // optimistic: the tap should feel instant
+  renderPartner(data);
+  renderGallery(data);
+  buzz("medium");
+  try {
+    const response = await api("/api/persona", {
+      method: "POST", body: JSON.stringify({ key: p.key, initData }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    toast(`Теперь говоришь с ${p.name}. Новый разговор — /talk`);
+  } catch (_) {
+    data.persona = previous;
+    renderPartner(data);
+    renderGallery(data);
+    toast("Не получилось переключить — попробуй ещё раз");
+  }
+}
+
+(async function start() {
+  document.body.classList.add("skeleton");
+  try {
+    const response = await api("/api/home");
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    renderHeader(data);
+    renderPartner(data);
+    renderTiles(data);
+    renderLevel(data);
+    renderHeat(data);
+    renderActions(data);
+    renderGallery(data);
+  } catch (error) {
+    $("hello").innerHTML = '<span class="err">Не открылось</span>';
+    $("date").textContent = String(error.message || error).slice(0, 120);
+  } finally {
+    document.body.classList.remove("skeleton");
+  }
+})();
+</script>
+</body>
+</html>

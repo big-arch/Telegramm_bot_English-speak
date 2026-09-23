@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram import Router
+from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
@@ -9,6 +9,7 @@ from bot import personas as personas_mod
 from bot.callbacks import LevelCB, PersonaCB, SettingsCB, StyleCB
 from bot.db.models import User
 from bot.keyboards.common import level_kb, persona_kb, settings_kb, style_kb
+from bot.services import portraits
 from bot.texts import CORRECTION_STYLES, SETTINGS_HEADER
 
 router = Router(name="settings")
@@ -63,7 +64,7 @@ async def open_section(
 
 @router.callback_query(PersonaCB.filter())
 async def change_persona(
-    query: CallbackQuery, callback_data: PersonaCB, session: DbSession, user: User
+    query: CallbackQuery, callback_data: PersonaCB, session: DbSession, user: User, bot: Bot
 ) -> None:
     persona = personas_mod.get(callback_data.key)
     user.persona_key = persona.key
@@ -71,6 +72,8 @@ async def change_persona(
     await query.answer(f"Теперь говоришь с {persona.name}")
     if isinstance(query.message, Message):
         await query.message.edit_text(_summary(user), reply_markup=settings_kb())
+        # Meeting someone new deserves their face, not a line in a settings list.
+        await portraits.send(bot, query.message.chat.id, persona)
 
 
 @router.callback_query(LevelCB.filter())

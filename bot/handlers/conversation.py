@@ -25,7 +25,7 @@ from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
 from bot.keyboards.common import reader_kb, topics_kb
 from bot.services import conversation as convo_service
-from bot.services import feedback, fluency, images, llm, stt, vision, wellbeing
+from bot.services import feedback, fluency, images, llm, portraits, stt, vision, wellbeing
 from bot.services.speak import send_spoken
 from bot.texts import (
     CHOOSE_TOPIC,
@@ -100,11 +100,18 @@ async def start_topic(
     await session.commit()
 
     persona = personas_mod.get(user.persona_key)
-    await query.message.edit_text(
+    header = (
         f"{topic.emoji} <b>{topic.title_ru}</b>\n"
         f"Говоришь с {persona.emoji} {persona.name}\n\n"
         f"<i>Закончить и получить разбор — /finish</i>"
     )
+    # Every conversation opens on who you are talking to. The topic list is
+    # replaced rather than left above it, so the chat reads as a scene rather
+    # than a menu with a scene underneath.
+    if await portraits.send(bot, query.message.chat.id, persona, caption=header):
+        await query.message.delete()
+    else:
+        await query.message.edit_text(header)
     await send_spoken(
         bot,
         session,

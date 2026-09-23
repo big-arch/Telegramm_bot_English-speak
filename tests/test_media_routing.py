@@ -96,10 +96,12 @@ def _document(mime: str | None) -> Document:
         (_message(voice=Voice(file_id="v", file_unique_id="v", duration=3)), "on_voice"),
         (_message(text="hello"), "on_text"),
         # The panel's buttons arrive as plain text. The conversation catch-all
-        # would happily take "🎭 Сценарий" as something said to the barista.
+        # would happily take "🏁 Закончить" as something said to the barista.
         (_message(text="💬 Говорить"), "press_talk"),
-        (_message(text="🎭 Сценарий"), "press_roleplay"),
         (_message(text="🔁 Слова"), "press_words"),
+        (_message(text="🏁 Закончить"), "press_finish"),
+        # A panel sent before scenes moved inside "Говорить" still has this.
+        (_message(text="🎭 Сценарий"), "press_talk"),
         (_message(text="☰ Ещё"), "press_more"),
     ],
 )
@@ -119,7 +121,6 @@ async def test_every_button_under_more_does_something(monkeypatch):
     from bot.keyboards.common import more_kb
 
     targets = {
-        "finish": (menu.conversation, "cmd_finish"),
         "progress": (menu.progress, "cmd_progress"),
         "mistakes": (menu.progress, "cmd_mistakes"),
         "settings": (menu.settings, "cmd_settings"),

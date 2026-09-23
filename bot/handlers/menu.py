@@ -10,7 +10,7 @@ exists; nothing is reimplemented, which is what keeps a button and its slash
 command from drifting apart.
 
 Registered before the conversation router: its catch-all would otherwise take
-"🎭 Сценарий" as something said to the barista.
+"🏁 Закончить" as something said to the barista.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from bot.callbacks import MenuCB
 from bot.db.models import User
 from bot.handlers import photo, progress, review, roleplay, settings, start
 from bot.handlers import conversation
-from bot.keyboards.common import MORE, ROLEPLAY, TALK, WORDS, main_kb, more_kb
+from bot.keyboards.common import FINISH, MORE, TALK, WORDS, main_kb, more_kb
 from bot.texts import PANEL_ON
 
 router = Router(name="menu")
@@ -44,19 +44,24 @@ async def cmd_menu(message: Message) -> None:
     await message.answer(PANEL_ON, reply_markup=main_kb())
 
 
-@router.message(F.text == TALK)
+# The panel's first version had a separate scenes button. Panels already sent
+# keep showing it until the next /menu, so it still has to go somewhere.
+LEGACY_ROLEPLAY = "🎭 Сценарий"
+
+
+@router.message(F.text.in_({TALK, LEGACY_ROLEPLAY}))
 async def press_talk(message: Message, session: DbSession, user: User) -> None:
-    await conversation.cmd_talk(message, session, user)
-
-
-@router.message(F.text == ROLEPLAY)
-async def press_roleplay(message: Message, user: User) -> None:
-    await roleplay.cmd_roleplay(message, user)
+    await roleplay.show_picker(message, session, user)
 
 
 @router.message(F.text == WORDS)
 async def press_words(message: Message, session: DbSession, user: User) -> None:
     await review.cmd_review(message, session, user)
+
+
+@router.message(F.text == FINISH)
+async def press_finish(message: Message, session: DbSession, user: User, bot: Bot) -> None:
+    await conversation.cmd_finish(message, session, user, bot)
 
 
 @router.message(F.text == MORE)
@@ -78,7 +83,7 @@ async def pick_more(
         return
 
     action = callback_data.action
-    if action == "finish":
+    if action == "finish":  # moved to the panel; old menus still send it
         await conversation.cmd_finish(message, session, user, bot)
     elif action == "progress":
         await progress.cmd_progress(message, session, user)

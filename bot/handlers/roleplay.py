@@ -2,8 +2,12 @@
 
 What happens *during* a scene lives in the ordinary conversation handlers —
 a scene is a conversation with a brief and a checklist, not a separate mode
-with its own voice path. This module owns only the edges: the list, the
+with its own voice path. This module owns only the edges: the picker, the
 start, and the finish.
+
+The picker is shared with free-talk topics. To the person pressing the button
+both mean "I want to talk", so there is one door with two tabs behind it —
+/talk and /roleplay open the same message on different tabs.
 """
 
 from __future__ import annotations
@@ -12,34 +16,72 @@ import html
 import logging
 
 from aiogram import Bot, Router
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 
 from bot import personas as personas_mod
 from bot import scenarios as scenarios_mod
-from bot.callbacks import ScenarioCB
+from bot.callbacks import ScenarioCB, TalkCB
 from bot.db.models import Session, User
-from bot.db.repositories import SessionRepo
-from bot.keyboards.common import opening_kb, scenario_done_kb, scenarios_kb
+from bot.db.repositories import SessionRepo, TopicRepo
+from bot.keyboards.common import opening_kb, scenario_done_kb, talk_kb
 from bot.services import flair
 from bot.services.speak import send_spoken
+from bot.texts import CHOOSE_TOPIC
 
 logger = logging.getLogger(__name__)
 router = Router(name="roleplay")
 
-MENU = (
-    "🎭 <b>Ролевые сценарии</b>\n\n"
-    "Сцена из жизни и задача, которую нужно решить по-английски. "
-    "Цели отмечаются сами, как только ты их выполнил, — говори как обычно.\n\n"
-    "<i>⭐ — под твой уровень</i>"
-)
+CHOOSE = f"<b>{CHOOSE_TOPIC}</b>\n\n"
+
+TAB_TEXT = {
+    "scenes": (
+        "🎭 <b>С задачей</b> — сцена из жизни и цель: заказать кофе, пройти "
+        "паспортный контроль, вернуть покупку. Цели отмечаются сами, пока ты "
+        "говоришь.\n\n<i>⭐ — под твой уровень</i>"
+    ),
+    "topics": (
+        "💬 <b>Свободно</b> — просто болтаем на тему, без задачи и финишной "
+        "черты.\n\n<i>А можно и без темы: скажи что угодно голосом — я подхвачу.</i>"
+    ),
+}
+
+
+async def _picker(session: DbSession, user: User, tab: str) -> tuple[str, InlineKeyboardMarkup]:
+    tab = tab if tab in TAB_TEXT else "scenes"
+    topics = await TopicRepo(session).for_level(user.productive_level) if tab == "topics" else []
+    return CHOOSE + TAB_TEXT[tab], talk_kb(tab, topics=topics, level=user.productive_level)
+
+
+async def show_picker(message: Message, session: DbSession, user: User, tab: str = "scenes") -> None:
+    text, markup = await _picker(session, user, tab)
+    await message.answer(text, reply_markup=markup)
 
 
 @router.message(Command("roleplay"))
-async def cmd_roleplay(message: Message, user: User) -> None:
-    await message.answer(MENU, reply_markup=scenarios_kb(user.productive_level))
+async def cmd_roleplay(message: Message, session: DbSession, user: User) -> None:
+    await show_picker(message, session, user, "scenes")
+
+
+@router.callback_query(TalkCB.filter())
+async def switch_tab(
+    query: CallbackQuery, callback_data: TalkCB, session: DbSession, user: User
+) -> None:
+    """Flip the tab in place; from under a debrief, open a fresh picker."""
+    await query.answer()
+    message = query.message
+    if not isinstance(message, Message):
+        return
+    text, markup = await _picker(session, user, callback_data.tab)
+    if message.text and message.text.startswith(CHOOSE_TOPIC):
+        try:
+            await message.edit_text(text, reply_markup=markup)
+        except TelegramBadRequest:
+            pass  # the tab that is already open was tapped: nothing to change
+    else:
+        await message.answer(text, reply_markup=markup)
 
 
 @router.callback_query(ScenarioCB.filter())
@@ -55,7 +97,8 @@ async def pick_scenario(
         return
 
     if callback_data.key == "menu":
-        await query.message.answer(MENU, reply_markup=scenarios_kb(user.productive_level))
+        # Buttons from before the picker was merged still say "menu".
+        await show_picker(query.message, session, user, "scenes")
         return
 
     scenario = scenarios_mod.get(callback_data.key)

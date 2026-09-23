@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aiogram.types import (
+    InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
@@ -22,6 +23,7 @@ from bot.callbacks import (
     ReviewCB,
     SettingsCB,
     StyleCB,
+    TalkCB,
     TopicCB,
 )
 from bot.db.models import Topic
@@ -95,17 +97,42 @@ def goal_kb() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def topics_kb(topics: list[Topic]) -> InlineKeyboardMarkup:
+def talk_kb(tab: str, *, topics: list[Topic], level: str) -> InlineKeyboardMarkup:
+    """One door into speaking, with two tabs behind it.
+
+    A scene and a free chat are the same thing to the person pressing the
+    button — "I want to talk" — and two buttons for it read as a riddle. So
+    there is one picker; the tabs on top say how, the rows below say what.
+    """
     kb = InlineKeyboardBuilder()
-    # Scenes first: a task with a finish line is the better session for most
-    # people most days, and a button below eight topics is a button nobody sees.
-    kb.button(text="🎭 Ролевые сценарии — с задачей", callback_data=ScenarioCB(key="menu"))
-    for topic in topics:
-        kb.button(
-            text=f"{topic.emoji} {topic.title_ru}",
-            callback_data=TopicCB(topic_id=topic.id),
+    tabs = (("scenes", "🎭 С задачей"), ("topics", "💬 Свободно"))
+    kb.row(
+        *(
+            InlineKeyboardButton(
+                text=f"· {label} ·" if key == tab else label,
+                callback_data=TalkCB(tab=key).pack(),
+            )
+            for key, label in tabs
         )
-    kb.adjust(1)
+    )
+    if tab == "scenes":
+        buttons = [
+            InlineKeyboardButton(
+                text=f"{'⭐ ' if level in s.levels else ''}{s.emoji} {s.title_ru}",
+                callback_data=ScenarioCB(key=s.key).pack(),
+            )
+            for s in scenarios_mod.for_level(level)
+        ]
+        for i in range(0, len(buttons), 2):
+            kb.row(*buttons[i : i + 2])
+    else:
+        for topic in topics:
+            kb.row(
+                InlineKeyboardButton(
+                    text=f"{topic.emoji} {topic.title_ru}",
+                    callback_data=TopicCB(topic_id=topic.id).pack(),
+                )
+            )
     return kb.as_markup()
 
 
@@ -148,23 +175,10 @@ def show_answer_kb(card_id: int) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def scenarios_kb(level: str) -> InlineKeyboardMarkup:
-    """Every scene, the ones pitched at this level first and starred."""
-    kb = InlineKeyboardBuilder()
-    for scenario in scenarios_mod.for_level(level):
-        star = "⭐ " if level in scenario.levels else ""
-        kb.button(
-            text=f"{star}{scenario.emoji} {scenario.title_ru}",
-            callback_data=ScenarioCB(key=scenario.key),
-        )
-    kb.adjust(2)
-    return kb.as_markup()
-
-
 def scenario_done_kb(session_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🏁 Разбор", callback_data=FinishCB(session_id=session_id))
-    kb.button(text="🎭 Ещё сценарий", callback_data=ScenarioCB(key="menu"))
+    kb.button(text="🎭 Ещё сценарий", callback_data=TalkCB(tab="scenes"))
     kb.adjust(2)
     return kb.as_markup()
 
@@ -173,7 +187,7 @@ def debrief_kb() -> InlineKeyboardMarkup:
     """What next, under the debrief. The moment right after a conversation is
     when someone is most willing to do one more thing — so offer it."""
     kb = InlineKeyboardBuilder()
-    kb.button(text="🎭 Сценарий", callback_data=ScenarioCB(key="menu"))
+    kb.button(text="💬 Ещё поговорить", callback_data=TalkCB(tab="scenes"))
     base = (settings.public_base_url or "").rstrip("/")
     if base.startswith("https://"):
         kb.button(text="🔁 Повторить слова", web_app=WebAppInfo(url=f"{base}/review"))
@@ -186,8 +200,8 @@ def debrief_kb() -> InlineKeyboardMarkup:
 # --------------------------------------------------------------------------- #
 
 TALK = "💬 Говорить"
-ROLEPLAY = "🎭 Сценарий"
 WORDS = "🔁 Слова"
+FINISH = "🏁 Закончить"
 MORE = "☰ Ещё"
 
 
@@ -196,16 +210,18 @@ def main_kb() -> ReplyKeyboardMarkup:
 
     The Menu button beside the field now opens the home screen, and Telegram
     gives that place to one thing only: a web app *or* the command list. So the
-    commands moved here — the three things people do daily as buttons, the rest
-    one tap behind "Ещё". One row, so a voice-first bot does not lose its
+    commands moved here — start talking, review words, and finish for the
+    debrief as buttons, the rest one tap behind "Ещё". Scenes are not a button
+    of their own: they are a tab inside "Говорить", because to the person
+    pressing it both mean "I want to talk". One row, so a voice-first bot does not lose its
     screen to a keyboard; and it can still be folded away with the icon
     Telegram puts beside the field.
     """
     return ReplyKeyboardMarkup(
         keyboard=[[
             KeyboardButton(text=TALK),
-            KeyboardButton(text=ROLEPLAY),
             KeyboardButton(text=WORDS),
+            KeyboardButton(text=FINISH),
             KeyboardButton(text=MORE),
         ]],
         resize_keyboard=True,
@@ -218,7 +234,6 @@ def more_kb() -> InlineKeyboardMarkup:
     """Everything else, as buttons with words instead of slash commands."""
     kb = InlineKeyboardBuilder()
     for action, label in (
-        ("finish", "🏁 Закончить и разбор"),
         ("progress", "📊 Мой прогресс"),
         ("mistakes", "📉 Мои ошибки"),
         ("settings", "⚙️ Настройки"),

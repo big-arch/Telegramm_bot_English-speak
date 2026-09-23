@@ -60,3 +60,7 @@ class FinishCB(CallbackData, prefix="fin"):
 
 class MenuCB(CallbackData, prefix="menu"):
     action: str
+
+
+class TalkCB(CallbackData, prefix="talk"):
+    tab: str  # scenes | topics

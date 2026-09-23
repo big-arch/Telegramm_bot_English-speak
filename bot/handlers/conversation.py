@@ -25,13 +25,12 @@ from bot.callbacks import FinishCB, HintCB, TopicCB
 from bot.config import settings
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
-from bot.keyboards.common import debrief_kb, opening_kb, reader_kb, topics_kb
+from bot.keyboards.common import debrief_kb, opening_kb, reader_kb
 from bot.services import conversation as convo_service
 from bot.services import feedback, fluency, hints, images, llm, portraits, stt, vision, wellbeing
 from bot.handlers import roleplay
 from bot.services.speak import send_spoken
 from bot.texts import (
-    CHOOSE_TOPIC,
     CRISIS_HELP,
     DAILY_LIMIT_REACHED,
     DEBRIEF_HEADER,
@@ -73,13 +72,8 @@ async def _topic_of(session: DbSession, convo: Session) -> Topic | None:
 
 @router.message(Command("talk"))
 async def cmd_talk(message: Message, session: DbSession, user: User) -> None:
-    topics = await TopicRepo(session).for_level(user.productive_level)
-    if not topics:
-        await message.answer(
-            "Темы ещё не загружены. Запусти <code>python -m scripts.seed</code> и попробуй снова."
-        )
-        return
-    await message.answer(CHOOSE_TOPIC, reply_markup=topics_kb(topics))
+    # Scenes and free topics share one picker; see handlers/roleplay.py.
+    await roleplay.show_picker(message, session, user)
 
 
 @router.callback_query(TopicCB.filter())
@@ -106,7 +100,7 @@ async def start_topic(
     header = (
         f"{topic.emoji} <b>{topic.title_ru}</b>\n"
         f"Говоришь с {persona.emoji} {persona.name}\n\n"
-        f"<i>Закончить и получить разбор — /finish</i>"
+        f"<i>Закончить и получить разбор — «🏁 Закончить» внизу</i>"
     )
     # Every conversation opens on who you are talking to. The topic list is
     # replaced rather than left above it, so the chat reads as a scene rather

@@ -7,6 +7,7 @@ import logging
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BufferedInputFile, Message
+from aiogram.utils.chat_action import ChatActionSender
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 
 from bot import personas as personas_mod
@@ -50,13 +51,17 @@ async def send_spoken(
             # file_id can be invalidated; fall through and re-synthesise.
             logger.warning("cached file_id rejected, re-synthesising")
 
-    audio = await tts.synthesize(
-        text,
-        edge_voice=persona.edge_voice,
-        elevenlabs_voice_id=persona.elevenlabs_voice_id,
-        openai_voice=persona.openai_voice,
-        speed=speed,
-    )
+    # "Recording a voice message…" in the chat header while it is being made —
+    # what a person on the other end would be doing, and far better than a
+    # silent pause that looks like the bot has gone.
+    async with ChatActionSender.record_voice(bot=bot, chat_id=chat_id):
+        audio = await tts.synthesize(
+            text,
+            edge_voice=persona.edge_voice,
+            elevenlabs_voice_id=persona.elevenlabs_voice_id,
+            openai_voice=persona.openai_voice,
+            speed=speed,
+        )
     if audio is None:
         # Voice is a nicety; never let a synthesis failure cost them the reply.
         return await bot.send_message(chat_id, text, reply_markup=reply_markup)

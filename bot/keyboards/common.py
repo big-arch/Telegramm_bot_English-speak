@@ -161,3 +161,15 @@ def scenario_done_kb(session_id: int) -> InlineKeyboardMarkup:
     kb.button(text="🎭 Ещё сценарий", callback_data=ScenarioCB(key="menu"))
     kb.adjust(2)
     return kb.as_markup()
+
+
+def debrief_kb() -> InlineKeyboardMarkup:
+    """What next, under the debrief. The moment right after a conversation is
+    when someone is most willing to do one more thing — so offer it."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎭 Сценарий", callback_data=ScenarioCB(key="menu"))
+    base = (settings.public_base_url or "").rstrip("/")
+    if base.startswith("https://"):
+        kb.button(text="🔁 Повторить слова", web_app=WebAppInfo(url=f"{base}/review"))
+    kb.adjust(2)
+    return kb.as_markup()

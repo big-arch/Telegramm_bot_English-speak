@@ -119,8 +119,8 @@ def render(hints: list[Hint], *, with_russian: bool) -> str:
 
     lines = ["💡 <b>Можно ответить так</b>", ""]
     for number, hint in enumerate(hints, start=1):
-        lines.append(f"{number}. {html.escape(hint.en)}")
+        lines.append(f"{number}. {html.escape(hint.en, quote=False)}")
         if with_russian and hint.ru:
-            lines.append(f"    <i>{html.escape(hint.ru)}</i>")
+            lines.append(f"    <i>{html.escape(hint.ru, quote=False)}</i>")
     lines += ["", "<i>Скажи голосом и своими словами — не зачитывай дословно.</i>"]
     return "\n".join(lines)

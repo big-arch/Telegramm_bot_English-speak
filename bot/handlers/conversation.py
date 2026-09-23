@@ -20,11 +20,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession as DbSession
 
 from bot import personas as personas_mod
+from bot import scenarios as scenarios_mod
 from bot.callbacks import FinishCB, HintCB, TopicCB
 from bot.config import settings
 from bot.db.models import ErrorRecord, Session, Topic, Turn, User
 from bot.db.repositories import ErrorRepo, SessionRepo, TopicRepo, TurnRepo, UsageRepo
-from bot.keyboards.common import opening_kb, reader_kb, topics_kb
+from bot.keyboards.common import debrief_kb, opening_kb, reader_kb, topics_kb
 from bot.services import conversation as convo_service
 from bot.services import feedback, fluency, hints, images, llm, portraits, stt, vision, wellbeing
 from bot.handlers import roleplay
@@ -251,14 +252,14 @@ def _heard(text: str, result: convo_service.TurnResult | None = None) -> str:
     The native version is withheld on a turn that carried feeling: nobody who
     has just said they lost their job should find a grammar note under it.
     """
-    line = f"🗣 <i>{html.escape(text)}</i>"
+    line = f"🗣 <i>{html.escape(text, quote=False)}</i>"
     if result is None or result.assessment is None:
         return line
     if wellbeing.read(text).needs_care:
         return line
     better = feedback.native_rewrite(text, result.assessment.rewritten)
     if better:
-        line += f"\n✨ Как сказал бы носитель: <tg-spoiler>{html.escape(better)}</tg-spoiler>"
+        line += f"\n✨ Как сказал бы носитель: <tg-spoiler>{html.escape(better, quote=False)}</tg-spoiler>"
     return line
 
 
@@ -567,6 +568,58 @@ def _metrics_of(turn: Turn) -> fluency.FluencyMetrics:
     )
 
 
+def _debrief_text(
+    convo: Session,
+    *,
+    turns: int,
+    wpm: float | None,
+    accuracy: float | None,
+    progress_line: str | None,
+    findings: list,
+) -> str:
+    """The debrief, laid out as a card rather than a column of lines.
+
+    The numbers go in one quiet line at the top — they are context, not the
+    point. The corrections are the point, so each gets its own quote block.
+    A scene's result leads, because finishing one is the thing worth seeing
+    first.
+    """
+    parts = [DEBRIEF_HEADER]
+
+    scenario = scenarios_mod.get(convo.scenario_key)
+    if scenario is not None:
+        done = len(scenarios_mod.parse_done(convo.goals_done))
+        total = len(scenario.goals)
+        verdict = "🏆 пройден" if done >= total else f"{done} из {total} целей"
+        parts.append(f"{scenario.emoji} {scenario.title_ru} · {verdict}")
+
+    stats = [f"🗣 {turns} {_plural(turns, 'реплика', 'реплики', 'реплик')}"]
+    if wpm:
+        stats.append(f"⏱ {wpm:.0f} слов/мин")
+    if accuracy is not None:
+        stats.append(f"🎯 точность {accuracy:.0f}%")
+    parts += ["", f"<blockquote>{' · '.join(stats)}</blockquote>"]
+
+    if progress_line:
+        parts += [f"📈 {html.escape(progress_line, quote=False)}"]
+
+    parts.append("")
+    if findings:
+        parts.append("<b>Над чем поработать</b>")
+    parts += [feedback.render(findings), "", "<i>📚 Слова из разговора уже в повторении.</i>"]
+    return "\n".join(parts)
+
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    """1 реплика, 2 реплики, 5 реплик — the fastest way for a Russian interface
+    to announce it was written in English is to get this wrong."""
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
 @router.callback_query(FinishCB.filter())
 async def finish_from_button(
     query: CallbackQuery, callback_data: FinishCB, session: DbSession, user: User, bot: Bot
@@ -669,13 +722,11 @@ async def _debrief(message: Message, session: DbSession, user: User, bot: Bot) -
 
     await repo.finish(convo, summary=None, accuracy=accuracy, wpm=wpm)
 
-    parts = [DEBRIEF_HEADER, "", f"Реплик: <b>{len(turns)}</b>"]
-    if wpm:
-        parts.append(f"Темп речи: <b>{wpm:.0f}</b> слов/мин")
-    if progress_line:
-        parts += ["", f"📈 {progress_line}"]
-    parts += ["", feedback.render(selected)]
-    parts += ["", "<i>Слова из этого разговора добавлены в /review.</i>"]
-
     await session.commit()
-    await status.edit_text("\n".join(parts))
+    await status.edit_text(
+        _debrief_text(
+            convo, turns=len(turns), wpm=wpm, accuracy=accuracy,
+            progress_line=progress_line, findings=selected,
+        ),
+        reply_markup=debrief_kb(),
+    )

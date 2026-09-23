@@ -17,6 +17,7 @@ understood.
 
 from __future__ import annotations
 
+import html
 import re
 from collections import Counter
 
@@ -112,19 +113,29 @@ CATEGORY_RU = {
 
 
 def render(findings: list[Finding]) -> str:
-    """Format selected corrections for the debrief message."""
+    """Format selected corrections for the debrief message.
+
+    One quote block per correction, so each reads as its own card rather than
+    three lines lost in a column of text. Everything the model wrote is
+    escaped: the span is quoted from the learner, the correction and the
+    explanation are generated, and any of them can contain "&" or "<" — which
+    in an HTML message makes Telegram reject the whole debrief.
+    """
     if not findings:
         return "Ошибок, которые стоило бы разбирать, не было. Так и держи 👏"
 
-    lines = []
+    blocks = []
     for finding in findings:
-        tag = CATEGORY_RU.get(finding.category, finding.category)
-        lines.append(
+        tag = html.escape(CATEGORY_RU.get(finding.category, finding.category), quote=False)
+        blocks.append(
+            "<blockquote>"
             f"<b>{tag}</b>\n"
-            f"<s>{finding.original_span}</s> → <b>{finding.correction}</b>\n"
-            f"<i>{finding.explanation}</i>"
+            f"<s>{html.escape(finding.original_span, quote=False)}</s> → "
+            f"<b>{html.escape(finding.correction, quote=False)}</b>\n"
+            f"<i>{html.escape(finding.explanation, quote=False)}</i>"
+            "</blockquote>"
         )
-    return "\n\n".join(lines)
+    return "\n".join(blocks)
 
 
 def hint_for(finding: Finding) -> str:

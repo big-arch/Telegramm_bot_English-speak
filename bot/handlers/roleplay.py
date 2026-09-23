@@ -137,7 +137,7 @@ async def after_turn(
 
     if not complete:
         names = ", ".join(
-            html.escape(scenario.goals[i].ru.lower()) for i in goals_met
+            html.escape(scenario.goals[i].ru.lower(), quote=False) for i in goals_met
         )
         try:
             await bot.send_message(
